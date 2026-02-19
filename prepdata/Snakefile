@@ -1,0 +1,96 @@
+from pathlib import Path
+
+configfile: "config/config.yaml"
+
+DATA_DIR = config['data_directory']
+RAW_DOWNLOAD_DIR = DATA_DIR + "/raw_download"
+RAW_DIR = DATA_DIR + "/raw_data"
+GOLD_DIR = DATA_DIR + "/gold"
+
+OSF_DATASETS = config["osf_datasets"]
+GDRIVE_DATASETS = config["gdrive_datasets"]
+ALL_DATASETS = OSF_DATASETS + GDRIVE_DATASETS
+
+rule all:
+    input: # FINAL files of prepdata
+        expand(
+            GOLD_DIR + "/{gse}/unadjusted.csv",
+            gse=[g.lower() for g in ALL_DATASETS]
+        )
+
+rule gold_dataset:
+    input:
+        directory(GOLD_DIR)
+    output:
+        GOLD_DIR + "/{gse}/unadjusted.csv"
+    shell:
+        "test -f {output}"
+
+rule convert_raw_to_gold:
+    input:
+        RAW_DIR
+    output:
+        directory(GOLD_DIR)
+    threads: 1
+    resources:
+        mem_mb=500,
+        runtime=480
+    log:
+        "logs/convert_raw_to_gold.log"
+    shell:
+        """
+        python convert_raw_files.py \
+            --raw-dir {input} \
+            --target-dir {output} \
+            &> {log}
+        """
+
+rule organize:
+    input:
+        RAW_DOWNLOAD_DIR
+    output:
+        directory(RAW_DIR)
+    log: 
+        "logs/organize.log"
+    shell:
+        """
+        python organize_downloaded_files.py \
+            --raw-dir {input} \
+            --target-dir {output} \
+            &> {log}
+        """
+
+rule download_gdrive:
+    output:
+        directory(RAW_DOWNLOAD_DIR)
+    log: 
+        "logs/download_gdrive.log"
+    shell:
+        """
+        python download_datasets.py \
+            --source gdrive \
+            --folder-id 1smhpktMRyP4yyFHKHSisxRd9jwb8kvrq \
+            --raw-download-dir {output} \
+            --raw-data-dir {RAW_DIR} \
+            --verbose \
+            --datasets {','.join(GDRIVE_DATASETS)} \
+            &> {log}
+        """
+
+rule download_osf:
+    output:
+        directory(RAW_DOWNLOAD_DIR)
+    log: 
+        "logs/download_osf.log"
+    shell:
+        """
+        python download_datasets.py \
+            --source osf \
+            --project-id eky3p \
+            --raw-download-dir {output} \
+            --raw-data-dir {RAW_DIR} \ 
+            --verbose \
+            --datasets {','.join(OSF_DATASETS)} \
+            &> {log}
+        """
+        
