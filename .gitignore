@@ -1,0 +1,14 @@
+__pycache__
+tmp*
+.DS_Store
+*.out
+*.sif
+grp_batch_effects
+core.*
+.kiro
+*.err
+.idea
+*.log
+.pixi
+.nextflow
+.snakemake
