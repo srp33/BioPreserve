@@ -2,9 +2,6 @@
 
 Analysis pipeline for batch effect correction in gene expression data. Implements the gmm_adjust method alongside deep learning and statistical approaches, with comprehensive evaluation frameworks and containerization support.
 
-## Overview
-
-This codebase provides tools for correcting batch effects in gene expression data, with particular focus on the gmm_adjust method and rigorous testing across multiple datasets and evaluation metrics.
 
 ## Components
 
@@ -16,22 +13,22 @@ This codebase provides tools for correcting batch effects in gene expression dat
 
 ## Quick Start
 
-### Docker (Local Development)
-```bash
-./run_docker.sh
-```
+### Pixi 
+#### Install pixi (if not already installed)
+curl -fsSL https://pixi.sh/install.sh | bash
 
-### Apptainer (HPC/Cluster Environments)
-```bash
-# Interactive shell
-./run_in_apptainer.sh shell
+#### Create pixi.toml
 
-# Run specific scripts
-./run_in_apptainer.sh scripts/all.sh
 
-# Submit to SLURM scheduler
-./run_in_apptainer.sh --sbatch scripts/evaluations/robustifying/code/3_real_data_pipe.R
-```
+# Run python and R files using 
+pixi install
+pixi run all
+
+# Run specific pipeline phases
+pixi run prepdata    # Data preparation only
+pixi run adjust      # Batch correction only
+pixi run evaluate    # Evaluation only
+
 
 ## Pipeline Overview
 
