@@ -1,0 +1,17 @@
+include: "../prepdata/Snakefile"
+
+
+configfile: "config.yaml"
+
+
+rule all:
+    input: 
+
+
+rule first:
+    input:
+    output:
+    log:
+    shell:
+
+        

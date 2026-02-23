@@ -493,6 +493,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert raw gene expression datasets to standardized format")
     parser.add_argument('--raw-dir', default='/data/raw_data', help='Directory containing raw datasets')
     parser.add_argument('--target-dir', default='/data/gold', help='Output directory for processed datasets')
+    parser.add_argument('--dataset', required=True, help="Process only a single dataset ID (e.g. GSE19615)")
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
     
     args = parser.parse_args()
@@ -508,7 +509,15 @@ def main():
     
     # Scan for datasets
     datasets = scan_for_datasets(raw_data_dir)
-    print_now(f"\n📊 Found {len(datasets)} datasets to process")
+
+    if args.dataset:
+        # Filter to requested dataset only
+        datasets = [d for d in datasets if d['id'].lower() == args.dataset.lower()]
+        if not datasets:
+            print_now(f"Dataset {args.dataset} not found in {raw_data_dir}")
+            return 1
+        
+    print_now(f"\n📊 Found {len(datasets)} dataset(s) to process")
     
     if not datasets:
         print_now("❌ No valid datasets found")

@@ -1,0 +1,60 @@
+[workspace]
+name = "classify_er_all_datasets"
+version = "0.1.0"
+description = "Classify ER all datasets analysis environment"
+channels = ["conda-forge", "bioconda", "r"]
+platforms = ["linux-64"]
+
+[dependencies]
+# === R Base ===
+r-base = ">=4.3"
+
+# === Data Manipulation ===
+r-tidyverse = "*"        # Core tidyverse (dplyr, ggplot2, readr, stringr, tidyr, purrr)
+r-patchwork = "*"        # plot_performance.R (multi-panel plots)
+r-vroom = "*"            # adjust.R (fast CSV reading)
+"r-data.table" = "*"     # adjust.R (fast CSV writing)
+
+# === Batch Correction (Core) ===
+bioconductor-sva = "*"                      # ComBat (adjust.R)
+bioconductor-batchelor = "*"                # MNN (adjust.R)
+r-seurat = "*"                              # Required for MNN (adjust.R)
+bioconductor-summarizedexperiment = "*"     # Data structures (adjust.R)
+bioconductor-singlecellexperiment = "*"     # Required for MNN via Seurat (adjust.R)
+bioconductor-limma = "*"                    # removeBatchEffect (adjust.R)
+bioconductor-genomeinfodb = "*"             # Required by GenomicRanges
+bioconductor-genomeinfodbdata = "*"         # Required by GenomeInfoDb
+
+# === Batch Correction (Additional Methods) ===
+r-huge = "*"                                # NPN transformation (adjust.R)
+
+# === Statistical/ML Packages ===
+r-mclust = "*"           # GMM adjustment (gmm_adjust.R)
+r-foreach = "*"          # Parallel loops (gmm_adjust.R)
+r-doparallel = "*"       # Parallel backend (gmm_adjust.R)
+
+# === Utilities ===
+r-argparse = "*"
+
+# === Python (Classifier) ===
+python = ">=3.12"
+numpy = "*"
+pandas = "*"
+scikit-learn = "*"
+
+# === Workflow ===
+snakemake = "==9.13.7"
+snakemake-executor-plugin-slurm = ">=1.9.2,<2"
+r-tidytext = ">=0.4.3,<0.5"
+
+[tasks]
+# Test essential packages
+test-r-core = "R --vanilla -q -e 'library(dplyr); library(ggplot2); library(patchwork); library(vroom); library(data.table); cat(\"✓ R core packages loaded\\n\")'"
+test-r-bioc = "R --vanilla -q -e 'library(SummarizedExperiment); library(SingleCellExperiment); library(sva); library(batchelor); library(limma); cat(\"✓ Bioconductor packages loaded\\n\")'"
+test-r-batch = "R --vanilla -q -e 'library(huge); library(mclust); cat(\"✓ Batch correction packages loaded\\n\")'"
+test-dbdata = "R --vanilla -q -e 'library(GenomeInfoDbData); cat(\"✓ GenomeInfoDbData loaded\\n\")'"
+test-python = "python -c 'import numpy; import pandas; from sklearn.ensemble import HistGradientBoostingClassifier; print(\"✓ Python packages loaded\")'"
+test-all = { depends-on = ["test-r-core", "test-r-bioc", "test-r-batch", "test-dbdata", "test-python"] }
+
+[activation]
+env={RETICULATE_PYTHON = ".pixi/envs/default/bin/python"}
