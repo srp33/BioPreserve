@@ -23,6 +23,9 @@ rule convert_raw_to_gold:
         RAW_DIR
     output:
         GOLD_DIR + "/{gse}/unadjusted.csv"
+    resources:
+        runtime=30,
+        mem_mb=16000
     log:
         "logs/convert_{gse}.log"
     shell:
@@ -73,9 +76,9 @@ rule download_osf:
         "logs/download_osf.log"
     params:
         datasets=",".join(OSF_DATASETS)
-        resources:
-            slurm_partition="login",
-            slurm_extra="login"
+    resources:
+        slurm_partition="login",
+        slurm_extra="login"
     shell:
         """
         python download_datasets.py \
