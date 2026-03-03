@@ -4,23 +4,26 @@ import numpy as np
 import pandas as pd 
 
 from .base import BaseBatchEffect, BatchEffectResult, BatchEffectDescription
-
+from .split import BatchSplit
 
 class AdditiveShiftDescription(BatchEffectDescription):
     """
     Stores true additive batch shifts
     """
 
-    def __init__(self, shifts: dict[int, np.ndarray], batch_labels: np.ndarray, feature_names: list[str]):
+    def __init__(self, shifts: dict[int, np.ndarray], batch_labels: pd.Series, feature_names: list[str]):
         self.shifts = shifts
-        self.batch_labels = batch_labels
+        self.batch_labels: pd.Series = batch_labels
         self.feature_names = feature_names
 
     def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
+        if not X_batch.index.equals(self.batch_labels.index):
+            raise ValueError("Index mismatch between X_batch and stored batch labels.")
         X = X_batch.copy()
 
-        for i, batch_id in enumerate(self.batch_labels):
-            X.iloc[i] -= self.shifts[batch_id]
+        for batch_id, shift in self.shifts.items():
+            idx = self.batch_labels == batch_id
+            X.loc[idx] -= shift
 
         return X
     
@@ -30,32 +33,35 @@ class AdditiveShiftDescription(BatchEffectDescription):
             "n_batches": len(self.shifts),
         }
     
+# Think about how to add a global shift
 class AdditiveShiftEffect(BaseBatchEffect):
     """
     Simulates additive batch-specific mean shifts.
     """
 
-    def __init__(self, n_batches: int, scale: float = 1.0, random_state=None):
+    def __init__(self, scale: float = 1.0, random_state=None):
         super().__init__(random_state)
-        self.n_batches = n_batches
         self.scale = scale
+        self.rng = np.random.default_rng(random_state)
+        
+    def apply(self, X: pd.DataFrame, split: BatchSplit,) -> BatchEffectResult:
+        rng = self.rng
 
-    def apply(self, X: pd.DataFrame, metadata=None) -> BatchEffectResult:
-        rng = np.random.default_rng(self.random_state)
+        batch_labels = split.batch_labels
+        unique_batches = batch_labels.unique()
 
-        n_samples, n_features = X.shape
-
-        batch_labels = rng.integers(0, self.n_batches, size=n_samples)
+        n_features = X.shape[1]
 
         shifts = {
             b: rng.normal(0, self.scale, size=n_features)
-            for b in range(self.n_batches)
+            for b in unique_batches
         }
 
         X_batch = X.copy()
 
-        for i, batch_id in enumerate(batch_labels):
-            X_batch.iloc[i] += shifts[batch_id]
+        # Apply shifts
+        shift_matrix = np.vstack([shifts[b] for b in batch_labels])
+        X_batch = X + shift_matrix
 
         description = AdditiveShiftDescription(
             shifts=shifts,
@@ -63,15 +69,10 @@ class AdditiveShiftEffect(BaseBatchEffect):
             feature_names=list(X.columns),
         )
 
-        batch_meta = pd.DataFrame(
-            {"batch": batch_labels},
-            index=X.index,
-        )
-
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
-            metadata=batch_meta,
+            metadata=split.metadata,
             description=description,
         )
 

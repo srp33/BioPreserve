@@ -1,0 +1,14 @@
+[project]
+name = "batch-effects"
+version = "0.1.0"
+description = "Synthetic batch effect simulation framework"
+authors = [{name = "Your Name"}]
+dependencies = ["numpy", "pandas"]
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

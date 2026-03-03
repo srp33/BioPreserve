@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import pandas as pd
+from .split import BatchSplit
 
 
 @dataclass
@@ -18,7 +19,7 @@ class BatchEffectDescription(ABC):
     """
 
     @abstractmethod
-    def invert(self, X_batch: pd.DataFrame) -> pd.Dataframe:
+    def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
         ...
     
     @abstractmethod
@@ -38,7 +39,7 @@ class BaseBatchEffect(ABC):
     def apply(
         self, 
         X: pd.DataFrame,
-        metadata: pd.DataFrame | None = None,
+        split: BatchSplit,
     ) -> BatchEffectResult:
         ...
         
