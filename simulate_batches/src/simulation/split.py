@@ -3,6 +3,8 @@ from typing import Optional
 from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import bisect
+import scipy.special as sps
+from sklearn.metrics import mutual_info_score
 import pandas as pd
 
 # Core Data Structure
@@ -11,6 +13,7 @@ class BatchSplit:
     batch_labels: pd.Series 
     metadata: pd.DataFrame | None = None
     info: dict | None = None
+
 
 # Base Class
 class BaseBatchSplit:
@@ -28,6 +31,7 @@ class BaseBatchSplit:
     ) -> BatchSplit:
         raise NotImplementedError
     
+
 class RandomBatchSplit(BaseBatchSplit):
     """
     Uniform Random Assignment.
@@ -54,6 +58,7 @@ class RandomBatchSplit(BaseBatchSplit):
             },
         )
 
+
 class StratifiedSplit(BaseBatchSplit):
     """
     Balances distribution of a categorical metadata column across batches.
@@ -71,7 +76,7 @@ class StratifiedSplit(BaseBatchSplit):
         if metadata is None:
             raise ValueError("StratifiedSplit requires metadata.")
         
-        rng = self.rng()
+        rng = self._rng()
         batch_labels = np.zeros(len(X), dtype=int)
 
         for _, idx in metadata.groupby(self.column).groups.items():
@@ -94,6 +99,8 @@ class StratifiedSplit(BaseBatchSplit):
                   "column": self.column,
             },
         )
+
+
 class ConfoundedSplit(BaseBatchSplit):
     """
     Introduces controlled confounding between a binary metadata column and batch.
@@ -104,7 +111,7 @@ class ConfoundedSplit(BaseBatchSplit):
     column = Binary metadata column to confound with batch.
     strength = Blend factor between independent (0) and perfectly confounded (1).
                 Cannot be used with entropy.
-    entropy = Desired conditional entropy of batch given metadata (in bits)
+    temperature = Energy parameter for confounded assignment. 1E-10 is perfectly confounded, 1E10 is independent.
                 Cannot be used with strength.
     random_state = RNG seed for reproducibility
     """
@@ -114,90 +121,107 @@ class ConfoundedSplit(BaseBatchSplit):
             n_batches: int,
             column: str,
             strength: Optional[float] = None,
-            entropy: Optional[float] = None,
+            temperature: Optional[float] = None,
             random_state: int | None = None,
     ):
         self.n_batches = n_batches
         self.column = column
-        self.rng = np.random.default_rng(random_state)
+        self.rng = self._rng()
 
-        if (strength is not None) and (entropy is not None):
-            raise ValueError("Specify either strength or entropy, not both.")
-        if (strength is None) and (entropy is None):
+        if (strength is not None) and (temperature is not None):
+            raise ValueError("Specify either strength or temperature, not both.")
+        if (strength is None) and (temperature is None):
             strength = 0.5
 
-        if strength is not None:
-            if not (0 <= strength <= 1):
-                raise ValueError("strength must be in [0,1]")
-            if entropy is not None:
-                if not (0 <= entropy <= 1):
-                    raise ValueError("entropy muts be in [0,1] bits for binary metadata")
-        super().__init__(n_batches, random_state)
+        if strength is not None and not (0 <= strength <= 1):
+            raise ValueError("strength must be in [0,1]")
 
-        if not (0 <= strength <= 1):
-            raise ValueError("strength must be in [0, 1]")
+        if temperature is not None and temperature <= 0:
+            raise ValueError("temperature must be positive")
+
+        super().__init__(n_batches, random_state)
         
         self.strength = strength
-        self.entropy = entropy
+        self.temperature = temperature
 
-    def apply(self, X, metadata) -> BatchSplit:
+    def _allocate_batches(self, samples_per_class) -> np.ndarray:
+        """D'Hondt allocation when batches > classes."""
+        n_classes = len(samples_per_class)
+        affinity_matrix = np.eye(n_classes, self.n_batches, dtype=float)
+
+        # Distribute the remaining batches one by one
+        for new_batch_idx in range(n_classes, self.n_batches):
+            largest_class = np.argmax(samples_per_class / affinity_matrix.sum(axis=1))
+            affinity_matrix[largest_class, new_batch_idx] = 1.0
+            
+        return affinity_matrix
+
+    def _distribute_classes(self, samples_per_class) -> np.ndarray:
+        """Greedy bin packing when batches < classes."""
+        n_classes = len(samples_per_class)
+        batch_sizes = np.zeros(self.n_batches)
+        affinity_matrix = np.zeros((n_classes, self.n_batches), dtype=float)
+
+        for c in np.argsort(-samples_per_class):
+            b = int(np.argmin(batch_sizes))
+            affinity_matrix[c, b] = 1.0
+            batch_sizes[b] += samples_per_class[c]
+
+        return affinity_matrix
+
+    def apply(self, X, metadata, debug=False) -> BatchSplit:
         if metadata is None:
             raise ValueError("ConfoundedSplit requires metadata.")
 
-        y = metadata[self.column].values
-        if len(np.unique(y)) != 2:
-            raise ValueError("ConfoundedSplit currently supports binary variables.")
-        
-        # Map to 0/1
-        y_binary = pd.factorize(y)[0]
+        class_idx, _ = pd.factorize(metadata[self.column])
+        samples_per_class = np.bincount(class_idx)
+        n_classes = len(samples_per_class)
 
-        # Probability of batch 1 given condition
-        base_prob = 1 / self.n_batches
-        
-        if self.entropy is not None:
-            # Compute probability p that yields desired entropy
-            # Solve H(p) = entropy --> p*log2(p) + (1-p)*log2(1-p) = entropy
-            # For binary, p in [0.5, 1] since symmetric
-            target_entropy = self.entropy
-            if target_entropy == 0:
-                p = 1.0
-            elif target_entropy == 1.0:
-                p = 0.5
-            else:
-                # Numeric solution using simple bisection
-                def H(p):
-                    p = np.clip(p, 1e-10, 1-1e-10)
-                    return -(p*np.log2(p) + (1-p)*np.log2(1-p))
-                p = bisect(lambda x: H(x)-target_entropy, 0.5, 1.0)
-            probs = np.where(y_binary == 1, p, 1-p)
+        if self.n_batches == n_classes:
+            affinity_matrix = np.eye(n_classes, self.n_batches, dtype=float)
+        elif self.n_batches > n_classes:
+            affinity_matrix = self._allocate_batches(samples_per_class)
+        else: # self.n_batches < n_classes:
+            affinity_matrix = self._distribute_classes(samples_per_class)
+
+        n = len(X)
+
+        if self.temperature is not None:
+            # Apply temperature to affinities to compute logits
+            # If temp -> inf, then affinity_matrix -> uniform probability over all batches
+            # If temp -> 0, then affinity_matrix -> assignment only to designated batches for that class.
+            logits = affinity_matrix / self.temperature
+            probs = sps.softmax(logits, axis=1)
         else:
-            # strength is specified
-            probs = (1 - self.strength) * base_prob + self.strength * y_binary
+            # Normalize rows to yield uniform probabilities across assigned batches
+            confounded_probs = affinity_matrix / affinity_matrix.sum(axis=1, keepdims=True)
+            equal_probs = np.full_like(confounded_probs, 1 / self.n_batches)
+            probs = (self.strength * confounded_probs + (1 - self.strength) * equal_probs)
+            
+        # Probs is the probability of assigning samples from each class to each batch, normalized over each class.
+        confounded = np.empty(n, dtype=int)
+        for c in range(n_classes):
+            mask = class_idx == c
+            confounded[mask] = self.rng.choice(self.n_batches, p=probs[c], size=mask.sum())
 
-        # Assign batches
-        if self.n_batches == 2:
-            batch_labels = self.rng.binomial(1, probs)
-        else:
-            batch_labels = self.rng.integers(0, self.n_batches, size=len(X))
-            mask = self.rng.random(len(X)) < (self.entropy if self.entropy is not None else self.strength)
-            batch_labels[mask] = y_binary[mask] % self.n_batches
+        # Mutual information ranges from 0 (independent) to log(min(n_batches, n_classes)) nats.
+        empirical_mi = mutual_info_score(class_idx, confounded)
 
-        batch_series = pd.Series(
-            batch_labels,
-            index=X.index,
-            name="batch",
-        )
-
-        empirical_corr = np.corrcoef(batch_labels, y_binary)[0,1]
+        if debug:
+            print(f"DEBUG: n_batches={self.n_batches}, classes={n_classes}, strength={self.strength}, temp={self.temperature}")
+            print(f"DEBUG: Batch distribution: {np.bincount(confounded, minlength=self.n_batches)}")
+            print(f"DEBUG: Empirical Mutual Information: {empirical_mi:.4f} nats")
 
         return BatchSplit(
-            batch_labels=batch_series,
+            batch_labels=pd.Series(confounded, index=X.index, name="batch"),
             metadata=metadata,
-            info={
-                "type": "confounded",
-                "column": self.column,
-                "strength": self.strength,
-                "entropy": self.entropy,
-                "empirical_correlation": empirical_corr,
-            },
+            info=dict(
+                type="confounded_general",
+                column=self.column,
+                strength=self.strength,
+                temperature=self.temperature,
+                classes=n_classes,
+                batches=self.n_batches,
+                mutual_information=empirical_mi,
+            ),
         )
