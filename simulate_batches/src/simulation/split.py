@@ -147,27 +147,27 @@ class ConfoundedSplit(BaseBatchSplit):
     def _allocate_batches(self, samples_per_class) -> np.ndarray:
         """D'Hondt allocation when batches > classes."""
         n_classes = len(samples_per_class)
-        affinity_matrix = np.eye(n_classes, self.n_batches, dtype=float)
+        perfectly_confounded = np.eye(n_classes, self.n_batches, dtype=float)
 
         # Distribute the remaining batches one by one
         for new_batch_idx in range(n_classes, self.n_batches):
-            largest_class = np.argmax(samples_per_class / affinity_matrix.sum(axis=1))
-            affinity_matrix[largest_class, new_batch_idx] = 1.0
+            largest_class = np.argmax(samples_per_class / perfectly_confounded.sum(axis=1))
+            perfectly_confounded[largest_class, new_batch_idx] = 1.0
             
-        return affinity_matrix
+        return perfectly_confounded
 
     def _distribute_classes(self, samples_per_class) -> np.ndarray:
         """Greedy bin packing when batches < classes."""
         n_classes = len(samples_per_class)
         batch_sizes = np.zeros(self.n_batches)
-        affinity_matrix = np.zeros((n_classes, self.n_batches), dtype=float)
+        perfectly_confounded = np.zeros((n_classes, self.n_batches), dtype=float)
 
         for c in np.argsort(-samples_per_class):
             b = int(np.argmin(batch_sizes))
-            affinity_matrix[c, b] = 1.0
+            perfectly_confounded[c, b] = 1.0
             batch_sizes[b] += samples_per_class[c]
 
-        return affinity_matrix
+        return perfectly_confounded
 
     def apply(self, X, metadata, debug=False) -> BatchSplit:
         if metadata is None:
@@ -178,23 +178,23 @@ class ConfoundedSplit(BaseBatchSplit):
         n_classes = len(samples_per_class)
 
         if self.n_batches == n_classes:
-            affinity_matrix = np.eye(n_classes, self.n_batches, dtype=float)
+            perfectly_confounded = np.eye(n_classes, self.n_batches, dtype=float)
         elif self.n_batches > n_classes:
-            affinity_matrix = self._allocate_batches(samples_per_class)
+            perfectly_confounded = self._allocate_batches(samples_per_class)
         else: # self.n_batches < n_classes:
-            affinity_matrix = self._distribute_classes(samples_per_class)
+            perfectly_confounded = self._distribute_classes(samples_per_class)
 
         n = len(X)
 
         if self.temperature is not None:
             # Apply temperature to affinities to compute logits
-            # If temp -> inf, then affinity_matrix -> uniform probability over all batches
-            # If temp -> 0, then affinity_matrix -> assignment only to designated batches for that class.
-            logits = affinity_matrix / self.temperature
+            # If temp -> inf, then logits -> uniform probability over all batches
+            # If temp -> 0, then logits -> assignment only to designated batches for that class.
+            logits = perfectly_confounded / self.temperature
             probs = sps.softmax(logits, axis=1)
         else:
             # Normalize rows to yield uniform probabilities across assigned batches
-            confounded_probs = affinity_matrix / affinity_matrix.sum(axis=1, keepdims=True)
+            confounded_probs = perfectly_confounded / perfectly_confounded.sum(axis=1, keepdims=True)
             equal_probs = np.full_like(confounded_probs, 1 / self.n_batches)
             probs = (self.strength * confounded_probs + (1 - self.strength) * equal_probs)
             
