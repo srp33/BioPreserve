@@ -111,7 +111,7 @@ class ConfoundedSplit(BaseBatchSplit):
     column = Binary metadata column to confound with batch.
     strength = Blend factor between independent (0) and perfectly confounded (1).
                 Cannot be used with entropy.
-    temperature = Energy parameter for confounded assignment. 1E-10 is perfectly confounded, 1E10 is independent.
+    temperature = Energy parameter for confounded assignment. 0.01 is perfectly confounded, 100 is independent.
                 Cannot be used with strength.
     random_state = RNG seed for reproducibility
     """
