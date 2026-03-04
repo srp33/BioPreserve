@@ -6,6 +6,7 @@ from scipy.optimize import bisect
 import scipy.special as sps
 from sklearn.metrics import mutual_info_score
 import pandas as pd
+import random
 
 # Core Data Structure
 @dataclass
@@ -20,9 +21,8 @@ class BaseBatchSplit:
     def __init__(self, n_batches: int, random_state: int | None = None):
         self.n_batches = n_batches
         self.random_state = random_state
-
-    def _rng(self):
-        return np.random.default_rng(self.random_state)
+        # Initialize rng in the Base Class so that each apply generates a different random number controlled by the state
+        self.rng = np.random.default_rng(self.random_state)
     
     def apply(
             self,
@@ -37,9 +37,8 @@ class RandomBatchSplit(BaseBatchSplit):
     Uniform Random Assignment.
     """
     def apply(self, X, metadata=None) -> BatchSplit:
-        rng = self._rng()
 
-        batch_labels = rng.integers(
+        batch_labels = self.rng.integers(
             0, self.n_batches, size=len(X)
         )
 
@@ -76,12 +75,11 @@ class StratifiedSplit(BaseBatchSplit):
         if metadata is None:
             raise ValueError("StratifiedSplit requires metadata.")
         
-        rng = self._rng()
         batch_labels = np.zeros(len(X), dtype=int)
 
         for _, idx in metadata.groupby(self.column).groups.items():
             idx = list(idx)
-            assignments = rng.integers(
+            assignments = self.rng.integers(
                 0, self.n_batches, size=len(idx)
             )
             batch_labels[[X.index.get_loc(i) for i in idx]] = assignments
@@ -124,9 +122,8 @@ class ConfoundedSplit(BaseBatchSplit):
             temperature: Optional[float] = None,
             random_state: int | None = None,
     ):
-        self.n_batches = n_batches
+        super().__init__(n_batches, random_state)
         self.column = column
-        self.rng = self._rng()
 
         if (strength is not None) and (temperature is not None):
             raise ValueError("Specify either strength or temperature, not both.")
@@ -138,8 +135,6 @@ class ConfoundedSplit(BaseBatchSplit):
 
         if temperature is not None and temperature <= 0:
             raise ValueError("temperature must be positive")
-
-        super().__init__(n_batches, random_state)
         
         self.strength = strength
         self.temperature = temperature
@@ -170,6 +165,7 @@ class ConfoundedSplit(BaseBatchSplit):
         return perfectly_confounded
 
     def apply(self, X, metadata, debug=False) -> BatchSplit:
+
         if metadata is None:
             raise ValueError("ConfoundedSplit requires metadata.")
 
@@ -202,7 +198,7 @@ class ConfoundedSplit(BaseBatchSplit):
         confounded = np.empty(n, dtype=int)
         for c in range(n_classes):
             mask = class_idx == c
-            confounded[mask] = self.rng.choice(self.n_batches, p=probs[c], size=mask.sum())
+            confounded[mask] = self.rng.choice(a=self.n_batches, p=probs[c], size=mask.sum())
 
         # Mutual information ranges from 0 (independent) to log(min(n_batches, n_classes)) nats.
         empirical_mi = mutual_info_score(class_idx, confounded)

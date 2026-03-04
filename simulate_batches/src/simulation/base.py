@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import pandas as pd
+import numpy as np
 from .split import BatchSplit
 
 
@@ -34,6 +35,7 @@ class BaseBatchEffect(ABC):
 
     def __init__(self, random_state: int | None = None):
         self.random_state = random_state
+        self.rng = np.random.default_rng(self.random_state)
 
     @abstractmethod
     def apply(

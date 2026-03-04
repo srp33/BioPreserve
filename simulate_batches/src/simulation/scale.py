@@ -38,10 +38,8 @@ class MultiplicativeScaleEffect(BaseBatchEffect):
     def __init__(self, scale: float = 1.0, random_state = None):
         super().__init__(random_state)
         self.scale = scale
-        self.rng = np.random.default_rng(random_state)
 
     def apply(self, X: pd.DataFrame, split: BatchSplit) -> BatchEffectResult:
-        rng = self.rng
 
         batch_labels = split.batch_labels
         unique_batches = batch_labels.unique()
@@ -50,7 +48,7 @@ class MultiplicativeScaleEffect(BaseBatchEffect):
 
         # Normal or log-normal scaling? 
         scaling = {
-            b: rng.lognormal(mean=0.0, sigma=self.scale, size=n_features)
+            b: self.rng.lognormal(mean=0.0, sigma=self.scale, size=n_features)
             for b in unique_batches
         }
 

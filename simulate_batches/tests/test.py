@@ -24,6 +24,10 @@ metadata = pd.DataFrame({
     "condition": [0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
 })
 
+multi_class_metadata = pd.DataFrame({
+    "condition": [0, 0, 2, 3, 2, 1, 3, 0, 0, 0]
+})
+
 # --------------------------
 # 2. Create a confounded batch split
 # --------------------------
@@ -32,7 +36,13 @@ splitter = ConfoundedSplit(n_batches=2, column="condition", strength=0.7, random
 batch_split = splitter.apply(X, metadata)
 
 print("Batch labels:\n", batch_split.batch_labels)
-print("Empirical correlation with condition:", batch_split.info["empirical_correlation"])
+print("Empirical Mutual Information:", batch_split.info["mutual_information"])
+
+splitter2 = ConfoundedSplit(n_batches=2, column="condition", strength=0.7, random_state=42)
+batch_split2 = splitter2.apply(X, multi_class_metadata)
+
+print("Multi-Class Batch labels:\n", batch_split2.batch_labels)
+print("Multi-Class Empirical Mutual Information:", batch_split2.info["mutual_information"])
 
 # --------------------------
 # 3. Initialize the batch effects
