@@ -3,6 +3,7 @@
 Analysis pipeline for batch effect correction in gene expression data. Implements the gmm_adjust method alongside deep learning and statistical approaches, with comprehensive evaluation frameworks and containerization support.
 
 
+
 ## Components
 
 - **Batch Correction**: GMM-based methods (gmm_adjust, gmm_adjust_nonlinear), deep learning approaches (AutoClass, ICVAE, VFAE, Wasserstein), and statistical methods (ComBat, MNN, Seurat, LIGER)
