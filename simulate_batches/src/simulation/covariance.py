@@ -2,6 +2,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from scipy.sparse import coo_matrix
+from scipy.linalg import sqrtm, inv
 from dataclasses import dataclass
 
 from .base import BaseBatchEffect, BatchEffectResult, BatchEffectDescription
@@ -34,22 +35,18 @@ class CovarianceDescription(BatchEffectDescription):
         X_c = X - mean_X
         Y_c = Y - mean_Y
 
-        # Optimal diagonal scale estimate (cov / var)
-        cov_xy = np.sum(Y_c * X_c, axis=0)
-        var_y = np.sum(Y_c * Y_c, axis=0)
+        # Full covariance of Y_c
+        Sigma_Y = np.cov(Y_c, rowvar=False)
 
-        D_inv = np.divide(
-            cov_xy,
-            var_y,
-            out=np.zeros_like(cov_xy),
-            where=var_y != 0
-        )
+        # Regularize
+        eps = 1e-12
+        Sigma_Y += eps * np.eye(Sigma_Y.shape[0])
 
-        # Shift estimate
-        C_inv = mean_X - mean_Y * D_inv
+        # Whitening matrix (inverse square root)
+        W = inv(sqrtm(Sigma_Y))
 
-        # Apply approximate inverse
-        X_hat = Y * D_inv + C_inv
+        # Apply whitening
+        X_hat = Y_c @ W + X.mean(axis=0)
 
         return pd.DataFrame(
             X_hat,
@@ -111,7 +108,7 @@ class CovarianceEffect(BaseBatchEffect):
 
             # --- Generate parameters ---
             D_vec = self.rng.normal(1.0, self.scale_std, size=g)
-            M = self._generate_sparse_M(g)
+            M = self._generate_sparse_M(g, self.cov_sparsity, self.cov_scale)
             C = self.rng.normal(0, self.shift_std, size=g)
             
             # --- Apply transformation ---
@@ -131,5 +128,5 @@ class CovarianceEffect(BaseBatchEffect):
             X_original=X,
             X_batch=X_batch,
             metadata=split.metadata,
-            descriptions=descriptions,
+            description=descriptions,
         )

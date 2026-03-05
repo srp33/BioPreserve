@@ -10,23 +10,16 @@ class MultiplicativeScaleDescription(BatchEffectDescription):
     Stores true multiplicative batch scaling
     """
 
-    def __init__(self, scaling: dict[int, np.ndarray], batch_labels: pd.Series, feature_names: list[str]):
+    def __init__(self, scaling: np.ndarray):
         self.scaling = scaling
-        self.batch_labels: pd.Series = batch_labels
-        self.feature_names = feature_names
 
     def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        X = X_batch.copy()
-
-        for i, batch_id in enumerate(self.batch_labels):
-            X.iloc[i] /= self.scaling[batch_id]
-
-        return X
+        return X_batch / self.scaling
     
     def parameters(self) -> dict:
         return {
             "type": "multiplicative_scale",
-            "n_batches": len(self.scaling),
+            "scale_vector": self.scaling,
         }
     
 class MultiplicativeScaleEffect(BaseBatchEffect):
@@ -42,29 +35,29 @@ class MultiplicativeScaleEffect(BaseBatchEffect):
 
         batch_labels = split.batch_labels
         unique_batches = batch_labels.unique()
-                
+        
+        X_batch = X.copy()
+        descriptions = {}
+
         n_features = X.shape[1]
 
-        # Normal or log-normal scaling? 
-        scaling = {
-            b: self.rng.lognormal(mean=0.0, sigma=self.scale, size=n_features)
-            for b in unique_batches
-        }
+        # Log-normal scaling? 
+        for batch_id in unique_batches:
+            
+            mask = batch_labels == batch_id
+            X_sub = X.loc[mask]
 
-        X_batch = X.copy()
+            scaling = self.rng.lognormal(mean=0.0, sigma=self.scale, size=n_features)
+            
+            X_scaled = X_sub * scaling
 
-        scale_matrix = np.vstack([scaling[b] for b in batch_labels])
-        X_batch = X * scale_matrix
+            X_batch.loc[mask] = X_scaled
 
-        description = MultiplicativeScaleDescription(
-            scaling=scaling,
-            batch_labels=batch_labels,
-            feature_names=list(X.columns),
-        )
+            descriptions[batch_id] = MultiplicativeScaleDescription(scaling=scaling)
 
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
             metadata=split.metadata,
-            description=description,
+            description=descriptions,
         )

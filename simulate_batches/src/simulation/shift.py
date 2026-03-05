@@ -11,26 +11,16 @@ class AdditiveShiftDescription(BatchEffectDescription):
     Stores true additive batch shifts
     """
 
-    def __init__(self, shifts: dict[int, np.ndarray], batch_labels: pd.Series, feature_names: list[str]):
-        self.shifts = shifts
-        self.batch_labels: pd.Series = batch_labels
-        self.feature_names = feature_names
+    def __init__(self, shift: np.ndarray):
+        self.shift = shift
 
     def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        if not X_batch.index.equals(self.batch_labels.index):
-            raise ValueError("Index mismatch between X_batch and stored batch labels.")
-        X = X_batch.copy()
-
-        for batch_id, shift in self.shifts.items():
-            idx = self.batch_labels == batch_id
-            X.loc[idx] -= shift
-
-        return X
+        return X_batch - self.shift
     
     def parameters(self) -> dict:
         return {
             "type": "additive_shift",
-            "n_batches": len(self.shifts),
+            "shift_vector": self.shift,
         }
     
 # Think about how to add a global shift
@@ -48,30 +38,29 @@ class AdditiveShiftEffect(BaseBatchEffect):
         batch_labels = split.batch_labels
         unique_batches = batch_labels.unique()
 
+        X_batch = X.copy()
+        descriptions = {}
+
         n_features = X.shape[1]
 
-        shifts = {
-            b: self.rng.normal(0, self.scale, size=n_features)
-            for b in unique_batches
-        }
+        for batch_id in unique_batches:
 
-        X_batch = X.copy()
+            mask = batch_labels == batch_id
+            X_sub = X.loc[mask]
 
-        # Apply shifts
-        shift_matrix = np.vstack([shifts[b] for b in batch_labels])
-        X_batch = X + shift_matrix
+            shift = self.rng.normal(0, self.scale, size=n_features)
 
-        description = AdditiveShiftDescription(
-            shifts=shifts,
-            batch_labels=batch_labels,
-            feature_names=list(X.columns),
-        )
+            X_shifted = X_sub * shift
+
+            X_batch.loc[mask] = X_shifted
+
+            descriptions[batch_id] = AdditiveShiftDescription(shift=shift)
 
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
             metadata=split.metadata,
-            description=description,
+            description=descriptions,
         )
 
 
