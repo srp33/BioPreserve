@@ -1,7 +1,7 @@
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from scipy.sparse import coo_matrix
+from scipy.sparse import coo_matrix, diags
 from scipy.linalg import sqrtm, inv
 from dataclasses import dataclass
 
@@ -18,11 +18,12 @@ class CovarianceDescription(BatchEffectDescription):
     C: np.ndarray
     X_original: pd.DataFrame
 
-    def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
+    def find_matrices(self, X_batch: pd.DataFrame):
         """
-        Approximate inversion using only per-gene shift and scale.
-        Ignores off-diagonal covariance.
+        Find optimal inverse shift and scale matrices.
         """
+
+        # True inverse would be X = (Y - C)(D + M)-1
 
         X = self.X_original.values
         Y = X_batch.values
@@ -35,25 +36,46 @@ class CovarianceDescription(BatchEffectDescription):
         X_c = X - mean_X
         Y_c = Y - mean_Y
 
-        # Full covariance of Y_c
-        Sigma_Y = np.cov(Y_c, rowvar=False)
+        # Calculate optimal diagonal scale (covariance / variance)
+        cov_xy = np.sum(Y_c * X_c, axis=0)
+        var_y=np.sum(Y_c * Y_c, axis=0)
 
-        # Regularize
-        eps = 1e-12
-        Sigma_Y += eps * np.eye(Sigma_Y.shape[0])
+        # Handle zero variance to avoid division by zero
+        D_inv = np.divide(cov_xy, var_y, out=np.zeros_like(cov_xy), where=var_y!=0)
 
-        # Whitening matrix (inverse square root)
-        W = inv(sqrtm(Sigma_Y))
+        # Calculate optimal shift
+        C_inv = mean_X - mean_Y * D_inv
 
-        # Apply whitening
-        X_hat = Y_c @ W + X.mean(axis=0)
+        return D_inv, C_inv
 
-        return pd.DataFrame(
-            X_hat,
-            index=X_batch.index,
-            columns=X_batch.columns,
-        )
+    def invert(self, X_batch: pd.DataFrame):
+        D_inv, C_inv = self.find_matrices(X_batch)
+        X = self.X_original.values 
+        Y = X_batch.values 
+        X_hat = Y @ np.diag(D_inv) + C_inv.reshape(1, -1)
+        X_delta = X_hat - X
+        mse = np.mean(X_delta**2)
+
+        # return X_delta.round(4) #, 
+        return X_hat
     
+    def neumann_series(self, X_batch):
+        D_inv = 1.0 / self.D
+        D_inv_mat = diags(D_inv)
+
+        term1 = D_inv_mat
+        term2 = D_inv_mat @ self.M @ D_inv_mat
+        term3 = term2 @ self.M @ D_inv_mat
+
+        A_inv = term1 - term2 + term3
+
+        Y = X_batch.values
+        Y_centered = Y - self.C
+
+        X_hat = Y_centered @ A_inv
+
+        return X_hat
+
     def parameters(self) -> dict:
         # Gives true inversion ???
         return {

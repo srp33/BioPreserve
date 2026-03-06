@@ -15,6 +15,7 @@ from simulation.covariance import CovarianceEffect
 # 1. Create fake data
 # --------------------------
 n_samples, n_features = 10, 5
+
 X = pd.DataFrame(
     np.ones((n_samples, n_features)), 
     columns=[f"gene_{i}" for i in range(n_features)]
@@ -25,7 +26,11 @@ X_rand = pd.DataFrame(
     columns=[f"gene_{i}" for i in range(n_features)]
 )
 
-# Random 1s and -1s
+rng = np.random.default_rng(seed=15)
+X_variance = pd.DataFrame(
+    rng.choice([-1, 1], size=(n_samples, n_features)),
+    columns = [f"gene_{i}" for i in range(n_features)]
+)
 
 metadata = pd.DataFrame({"condition": [0, 1] * (n_samples // 2)})
 multi_class_metadata = pd.DataFrame({"condition": [0, 0, 2, 3, 2, 1, 3, 0, 0, 0]})
@@ -57,7 +62,7 @@ cov_effect = CovarianceEffect(scale_std=0.1, shift_std=0.2, cov_sparsity=0.01, c
 # --------------------------
 shift_result = shift_effect.apply(X, split=batch_split)
 scale_result = scale_effect.apply(X, split=batch_split)
-cov_result = cov_effect.apply(X, split=batch_split)
+cov_result = cov_effect.apply(X_variance, split=batch_split)
 
 # --------------------------
 # 5. Helper: Test per-batch inversion
@@ -67,21 +72,21 @@ def test_inversion(effect_result, batch_labels):
     
     for batch_id, desc in effect_result.description.items():
         mask = batch_labels == batch_id
-        X_hat.loc[mask] = desc.invert(effect_result.X_batch.loc[mask])
-        print(X_hat)
+        X_hat.loc[mask] = desc.neumann_series(effect_result.X_batch.loc[mask])
 
-    # Use relaxed tolerance for approximate effects
+    # Compare inverted vs original
     if np.allclose(X_hat.values, effect_result.X_original.values, rtol=1e-5, atol=1e-8):
         print(f"[PASS] {effect_result.__class__.__name__} inversion successful.")
     else:
-        # For CovarianceEffect, you can inspect the difference instead of raising immediately
         diff = np.abs(X_hat.values - effect_result.X_original.values)
         print(f"[WARN] {effect_result.__class__.__name__} inversion not exact. Max diff = {diff.max()}")
+
+    return X_hat
 
 # --------------------------
 # 6. Run inversion tests
 # --------------------------
-test_inversion(cov_result, batch_split.batch_labels)
+# test_inversion(cov_result, batch_split.batch_labels)
 # for result in [shift_result, scale_result, cov_result]:
 #     test_inversion(result, batch_split.batch_labels)
 
@@ -95,5 +100,7 @@ test_inversion(cov_result, batch_split.batch_labels)
 # print("\n--- Scale Effect ---")
 # print("Batch Data:\n", scale_result.X_batch)
 
-# print("\n--- Covariance Effect ---")
-# print("Batch Data:\n", cov_result.X_batch)
+print("\n--- Covariance Effect ---")
+print("Original Data:\n", cov_result.X_original)
+print("Batch Data:\n", cov_result.X_batch)
+print("Inverted Data:\n", test_inversion(cov_result, batch_split.batch_labels))
