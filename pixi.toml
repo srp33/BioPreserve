@@ -1,0 +1,60 @@
+[workspace]
+name = "biopreserve"
+version = "0.1.0"
+description = "BioPreserve batch effect correction and classification workflows"
+channels = ["conda-forge", "bioconda", "r"]
+platforms = ["linux-64"]
+
+[dependencies]
+# === R Base ===
+r-base = ">=4.3"
+
+# === Data Manipulation ===
+r-tidyverse = "*"        # Core tidyverse (dplyr, ggplot2, readr, stringr, tidyr, purrr)
+r-patchwork = "*"        # Multi-panel plots
+r-vroom = "*"            # Fast CSV reading
+"r-data.table" = "*"     # Fast CSV writing
+r-tidytext = ">=0.4.3,<0.5"
+
+# === Batch Correction (Core) ===
+bioconductor-sva = "*"                      # ComBat
+bioconductor-batchelor = "*"                # MNN
+r-seurat = "*"                              # Required for MNN
+bioconductor-summarizedexperiment = "*"     # Data structures
+bioconductor-singlecellexperiment = "*"     # Required for MNN via Seurat
+bioconductor-limma = "*"                    # removeBatchEffect
+bioconductor-genomeinfodb = "*"             # Required by GenomicRanges
+bioconductor-genomeinfodbdata = "*"         # Required by GenomeInfoDb
+
+# === Batch Correction (Additional Methods) ===
+r-huge = "*"             # NPN transformation
+
+# === Statistical/ML Packages ===
+r-mclust = "*"           # GMM adjustment
+r-foreach = "*"          # Parallel loops
+r-doparallel = "*"       # Parallel backend
+
+# === Utilities ===
+r-argparse = "*"
+
+# === Python (Classifier & Data Processing) ===
+python = ">=3.12"
+numpy = "*"
+pandas = "*"
+scikit-learn = "*"
+
+# === Workflow ===
+snakemake = "==9.13.7"
+snakemake-executor-plugin-slurm = ">=1.9.2,<2"
+
+[tasks]
+# Test essential packages
+test-r-core = "R --vanilla -q -e 'library(dplyr); library(ggplot2); library(patchwork); library(vroom); library(data.table); cat(\"✓ R core packages loaded\\n\")'"
+test-r-bioc = "R --vanilla -q -e 'library(SummarizedExperiment); library(SingleCellExperiment); library(sva); library(batchelor); library(limma); cat(\"✓ Bioconductor packages loaded\\n\")'"
+test-r-batch = "R --vanilla -q -e 'library(huge); library(mclust); cat(\"✓ Batch correction packages loaded\\n\")'"
+test-dbdata = "R --vanilla -q -e 'library(GenomeInfoDbData); cat(\"✓ GenomeInfoDbData loaded\\n\")'"
+test-python = "python -c 'import numpy; import pandas; from sklearn.ensemble import HistGradientBoostingClassifier; print(\"✓ Python packages loaded\")'"
+test-all = { depends-on = ["test-r-core", "test-r-bioc", "test-r-batch", "test-dbdata", "test-python"] }
+
+[activation]
+env = { RETICULATE_PYTHON = ".pixi/envs/default/bin/python" }
