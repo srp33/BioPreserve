@@ -32,14 +32,14 @@ class AdditiveShiftEffect(BaseBatchEffect):
     def __init__(self, scale: float = 1.0, random_state=None):
         super().__init__(random_state)
         self.scale = scale
+        self.last_shift = None
         
     def apply(self, X: pd.DataFrame, split: BatchSplit,) -> BatchEffectResult:
 
         batch_labels = split.batch_labels
         unique_batches = batch_labels.unique()
-
         X_batch = X.copy()
-        descriptions = {}
+        self.last_shift = {}
 
         n_features = X.shape[1]
 
@@ -50,18 +50,34 @@ class AdditiveShiftEffect(BaseBatchEffect):
 
             shift = self.rng.normal(0, self.scale, size=n_features)
 
-            X_shifted = X_sub * shift
+            X_shifted = X_sub + shift
 
             X_batch.loc[mask] = X_shifted
 
-            descriptions[batch_id] = AdditiveShiftDescription(shift=shift)
+            self.last_shift[batch_id] = AdditiveShiftDescription(shift=shift)
 
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
             metadata=split.metadata,
-            description=descriptions,
+            description=self.last_shift,
         )
+    
+    def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return combined shift and scale for inverse transformation.
+        Uses the stored last_shift from apply().
+        """
+        n_features = X_batch.shape[1]
+        shift = np.zeros(n_features)
+
+        # Here we combine batch shifts by taking a mean across batches
+        # This is okay if we only want a global inverse approximation
+        for batch_desc in self.last_shift.values():
+            shift += batch_desc.shift
+        shift /= len(self.last_shift)  # average across batches
+        scale = np.ones(n_features)
+        return -shift, scale
 
 
 """

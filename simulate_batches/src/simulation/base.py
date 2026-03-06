@@ -45,3 +45,11 @@ class BaseBatchEffect(ABC):
     ) -> BatchEffectResult:
         ...
         
+    def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Returns vectors for inverting the applied effect.
+        """
+        n_features = X_batch.shape[1]
+        shift = np.zeros(n_features)
+        scale = np.ones(n_features)
+        return shift, scale

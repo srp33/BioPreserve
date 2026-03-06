@@ -72,7 +72,7 @@ def test_inversion(effect_result, batch_labels):
     
     for batch_id, desc in effect_result.description.items():
         mask = batch_labels == batch_id
-        X_hat.loc[mask] = desc.neumann_series(effect_result.X_batch.loc[mask])
+        X_hat.loc[mask] = desc.invert(effect_result.X_batch.loc[mask])
 
     # Compare inverted vs original
     if np.allclose(X_hat.values, effect_result.X_original.values, rtol=1e-5, atol=1e-8):

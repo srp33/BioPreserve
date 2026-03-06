@@ -30,6 +30,7 @@ class MultiplicativeScaleEffect(BaseBatchEffect):
     def __init__(self, scale: float = 1.0, random_state = None):
         super().__init__(random_state)
         self.scale = scale
+        self.last_scaling = None
 
     def apply(self, X: pd.DataFrame, split: BatchSplit) -> BatchEffectResult:
 
@@ -55,9 +56,20 @@ class MultiplicativeScaleEffect(BaseBatchEffect):
 
             descriptions[batch_id] = MultiplicativeScaleDescription(scaling=scaling)
 
+        self.last_scaling = descriptions
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
             metadata=split.metadata,
             description=descriptions,
         )
+    
+    def extract_effect(self, X_batch):
+        if not self.last_scaling:
+            return np.zeros(n_features), np.ones(n_features)
+        n_features = X_batch.shape[1]
+        scale = np.ones(n_features)
+        for desc in self.last_scaling.values():
+            scale *= desc.scaling
+        shift = np.zeros(n_features)
+        return shift, 1 / scale  # for inversion
