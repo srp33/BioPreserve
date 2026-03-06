@@ -59,22 +59,6 @@ class CovarianceDescription(BatchEffectDescription):
         # return X_delta.round(4) #, 
         return X_hat
     
-    def neumann_series(self, X_batch):
-        D_inv = 1.0 / self.D
-        D_inv_mat = diags(D_inv)
-
-        term1 = D_inv_mat
-        term2 = D_inv_mat @ self.M @ D_inv_mat
-        term3 = term2 @ self.M @ D_inv_mat
-
-        A_inv = term1 - term2 + term3
-
-        Y = X_batch.values
-        Y_centered = Y - self.C
-
-        X_hat = Y_centered @ A_inv
-
-        return X_hat
 
     def parameters(self) -> dict:
         # Gives true inversion ???
