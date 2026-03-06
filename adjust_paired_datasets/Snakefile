@@ -1,0 +1,132 @@
+from pathlib import Path
+from glob import glob
+
+configfile: "config.yaml"
+
+# Load configuration
+DATA_DIR = config['data_directory']
+ADJUST_SCRIPT = config['adjust_script']
+ADJUSTERS_PARALLEL = config['adjusters_parallel']
+ADJUSTERS_SEQUENTIAL = config['adjusters_sequential']
+ADJUSTERS_TARGET = config['adjusters_target']
+DEFAULT_BATCH_COL = config['default_batch_col']
+BATCH_COLS = config['batch_cols']
+TARGET_COLS = config['target_cols']
+DATASET_PATTERN = config['dataset_pattern']
+
+# Auto-discover datasets matching the pattern
+dataset_dirs = glob(f"{DATA_DIR}/{DATASET_PATTERN}")
+DATASETS = [Path(d).name for d in dataset_dirs if Path(d).is_dir()]
+
+# Generate all output files
+def get_all_outputs():
+    outputs = []
+    
+    # Parallel adjusters
+    for adjuster in ADJUSTERS_PARALLEL:
+        for dataset in DATASETS:
+            outputs.append(f"{DATA_DIR}/{dataset}/{adjuster}.csv")
+    
+    # Sequential adjusters
+    for adjuster in ADJUSTERS_SEQUENTIAL:
+        for dataset in DATASETS:
+            outputs.append(f"{DATA_DIR}/{dataset}/{adjuster}.csv")
+    
+    # Target adjusters
+    for adjuster in ADJUSTERS_TARGET:
+        for dataset in DATASETS:
+            outputs.append(f"{DATA_DIR}/{dataset}/{adjuster}_target.csv")
+    
+    return outputs
+
+rule all:
+    input:
+        get_all_outputs()
+
+# Rule for parallel adjusters (no target columns)
+rule adjust_parallel:
+    input:
+        data=DATA_DIR + "/{dataset}/unadjusted.csv",
+        script=ADJUST_SCRIPT
+    output:
+        DATA_DIR + "/{dataset}/{adjuster}.csv"
+    params:
+        batch_col=lambda wildcards: BATCH_COLS.get(wildcards.dataset, DEFAULT_BATCH_COL)
+    wildcard_constraints:
+        adjuster="|".join(ADJUSTERS_PARALLEL),
+        dataset="|".join(DATASETS)
+    log:
+        "logs/adjust_{dataset}_{adjuster}.log"
+    shell:
+        """
+        ulimit -s unlimited
+        if [ -f {output} ]; then
+            echo "Output file {output} already exists, skipping..." > {log}
+        else
+            Rscript {input.script} {input.data} {output} \
+                -a {wildcards.adjuster} \
+                -b {params.batch_col} \
+                --debug \
+                &> {log}
+        fi
+        """
+
+# Rule for sequential adjusters (no target columns)
+rule adjust_sequential:
+    input:
+        data=DATA_DIR + "/{dataset}/unadjusted.csv",
+        script=ADJUST_SCRIPT
+    output:
+        DATA_DIR + "/{dataset}/{adjuster}.csv"
+    params:
+        batch_col=lambda wildcards: BATCH_COLS.get(wildcards.dataset, DEFAULT_BATCH_COL)
+    wildcard_constraints:
+        adjuster="|".join(ADJUSTERS_SEQUENTIAL),
+        dataset="|".join(DATASETS)
+    resources:
+        parallel_jobs=1
+    log:
+        "logs/adjust_{dataset}_{adjuster}.log"
+    shell:
+        """
+        ulimit -s unlimited
+        if [ -f {output} ]; then
+            echo "Output file {output} already exists, skipping..." > {log}
+        else
+            Rscript {input.script} {input.data} {output} \
+                -a {wildcards.adjuster} \
+                -b {params.batch_col} \
+                --debug \
+                &> {log}
+        fi
+        """
+
+# Rule for target adjusters (with target columns)
+rule adjust_target:
+    input:
+        data=DATA_DIR + "/{dataset}/unadjusted.csv",
+        script=ADJUST_SCRIPT
+    output:
+        DATA_DIR + "/{dataset}/{adjuster}_target.csv"
+    params:
+        batch_col=lambda wildcards: BATCH_COLS.get(wildcards.dataset, DEFAULT_BATCH_COL),
+        target_col=lambda wildcards: TARGET_COLS.get(wildcards.dataset, "meta_bio")
+    wildcard_constraints:
+        adjuster="|".join(ADJUSTERS_TARGET) if ADJUSTERS_TARGET else "NONE",
+        dataset="|".join(DATASETS)
+    log:
+        "logs/adjust_{dataset}_{adjuster}_target.log"
+    shell:
+        """
+        ulimit -s unlimited
+        if [ -f {output} ]; then
+            echo "Output file {output} already exists, skipping..." > {log}
+        else
+            Rscript {input.script} {input.data} {output} \
+                -a {wildcards.adjuster} \
+                -b {params.batch_col} \
+                -c {params.target_col} \
+                --debug \
+                &> {log}
+        fi
+        """

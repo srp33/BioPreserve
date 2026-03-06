@@ -67,6 +67,16 @@ class CovarianceDescription(BatchEffectDescription):
             "M": self.M,
             "C": self.C
         }
+    
+    def extract_shift_scale(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Extract shift and scale for inverse transformation.
+        
+        Uses find_matrices() to compute optimal diagonal approximation.
+        Inverse: X = Y * D_inv + C_inv
+        """
+        D_inv, C_inv = self.find_matrices(X_batch)
+        return C_inv, D_inv
 
 class CovarianceEffect(BaseBatchEffect):
     """

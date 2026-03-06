@@ -1,0 +1,12 @@
+# Main config - compose from model, dataset, and training configs
+defaults:
+  - model: icvae
+  - dataset: gse49711
+  - training: default
+  - _self_
+
+# Data directories
+data_dir: /data/gold
+
+# Output naming
+output_suffix: ${model.name}

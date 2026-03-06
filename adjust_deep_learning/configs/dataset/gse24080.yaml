@@ -1,0 +1,5 @@
+# GSE24080 dataset configuration
+name: gse24080
+batch_col: meta_batch
+input_file: ${data_dir}/${dataset.name}/unadjusted.csv
+output_file: ${data_dir}/${dataset.name}/${output_suffix}.csv

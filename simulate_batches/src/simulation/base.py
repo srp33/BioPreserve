@@ -26,6 +26,28 @@ class BatchEffectDescription(ABC):
     @abstractmethod
     def parameters(self) -> dict:
         ...
+    
+    @abstractmethod
+    def extract_shift_scale(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Extract shift and scale parameters for the inverse transformation.
+        
+        Returns parameters in the form: X = Y * scale + shift
+        where Y is the batch-affected data and X is the recovered original.
+        
+        Parameters
+        ----------
+        X_batch : pd.DataFrame
+            The batch-affected data (may be needed for approximations).
+        
+        Returns
+        -------
+        shift : np.ndarray
+            Shift vector (one value per feature).
+        scale : np.ndarray
+            Scale vector (one value per feature).
+        """
+        ...
 
 
 class BaseBatchEffect(ABC):

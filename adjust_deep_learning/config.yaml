@@ -1,0 +1,22 @@
+# Snakemake configuration for deep learning models
+
+data_dir: /data/gold
+
+# Models to run
+models:
+  - icvae
+  - vfae
+  # - autoclass
+  # - wasserstein
+
+# Datasets to process
+datasets:
+  - gse49711
+  - gse24080
+  # - gse20194
+
+# Training configuration to use (default, fast, thorough)
+training_config: thorough
+
+# Hyperparameter sweep configuration (for hyperparameter_sweep rule)
+sweep_params: "model.latent_dim=5,10,20,50 training.epochs=100,200,400"

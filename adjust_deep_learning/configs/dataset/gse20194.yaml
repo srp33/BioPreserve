@@ -1,0 +1,5 @@
+# GSE20194 dataset configuration
+name: gse20194
+batch_col: meta_batch
+input_file: ${data_dir}/${dataset.name}/unadjusted.csv
+output_file: ${data_dir}/${dataset.name}/${output_suffix}.csv

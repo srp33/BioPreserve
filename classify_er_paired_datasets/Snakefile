@@ -1,0 +1,177 @@
+from pathlib import Path
+from glob import glob
+
+# Load this workflow's config first
+configfile: "config.yaml"
+
+# Store classify config before including other workflow
+CLASSIFY_DATA_DIR = config['data_directory']
+CLASSIFY_OUTPUT_DIR = config['output_directory']
+CLASSIFY_SCRIPTS_DIR = config['scripts_dir']
+CLASSIFY_ADJUSTERS = config['adjusters']
+CLASSIFY_CLASSIFIER = config['classifier']
+CLASSIFY_PREDICTION_COL = config['prediction_column']
+CLASSIFY_SOURCE_COL = config['source_column']
+CLASSIFY_N_REPEATS = config['n_repeats']
+CLASSIFY_N_SPLITS = config['n_splits']
+CLASSIFY_NUM_WORKERS = config['num_workers']
+CLASSIFY_INCLUDE_DATASETS = config.get('include_datasets', [])
+
+# Include the adjust_paired_datasets workflow
+# This will load its config and make its rules available with adjust_paired_ prefix
+module adjust_paired:
+    snakefile: "../adjust_paired_datasets/Snakefile"
+    config: config.get('adjust_paired_config', '../adjust_paired_datasets/config.yaml')
+
+use rule * from adjust_paired as adjust_paired_*
+
+# Use classify config variables
+DATA_DIR = CLASSIFY_DATA_DIR
+OUTPUT_DIR = CLASSIFY_OUTPUT_DIR
+SCRIPTS_DIR = CLASSIFY_SCRIPTS_DIR
+ADJUSTERS = CLASSIFY_ADJUSTERS
+CLASSIFIER = CLASSIFY_CLASSIFIER
+PREDICTION_COL = CLASSIFY_PREDICTION_COL
+SOURCE_COL = CLASSIFY_SOURCE_COL
+N_REPEATS = CLASSIFY_N_REPEATS
+N_SPLITS = CLASSIFY_N_SPLITS
+NUM_WORKERS = CLASSIFY_NUM_WORKERS
+INCLUDE_DATASETS = CLASSIFY_INCLUDE_DATASETS
+
+# Auto-discover datasets
+PAIRED_DIR = f"{DATA_DIR}/paired_datasets"
+GOLD_DIR = f"{DATA_DIR}/gold"
+
+# Find paired datasets (directories with gse*_gse* pattern)
+paired_dataset_dirs = glob(f"{PAIRED_DIR}/gse*_gse*")
+PAIRED_DATASETS = [Path(d).name for d in paired_dataset_dirs if Path(d).is_dir()]
+
+# Find single datasets (directories in gold with meta_er_status)
+gold_dataset_dirs = glob(f"{GOLD_DIR}/gse*")
+SINGLE_DATASETS = [Path(d).name for d in gold_dataset_dirs if Path(d).is_dir()]
+
+# Filter datasets if specified
+if INCLUDE_DATASETS:
+    PAIRED_DATASETS = [d for d in PAIRED_DATASETS if any(inc in d for inc in INCLUDE_DATASETS)]
+    SINGLE_DATASETS = [d for d in SINGLE_DATASETS if d in INCLUDE_DATASETS]
+
+print(f"Found {len(PAIRED_DATASETS)} paired datasets")
+print(f"Found {len(SINGLE_DATASETS)} single datasets")
+
+rule all:
+    input:
+        expand(
+            OUTPUT_DIR + "/er_classification_{adjuster}.csv",
+            adjuster=ADJUSTERS
+        )
+
+rule all_detailed:
+    input:
+        expand(
+            OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_summary.csv",
+            dataset=config.get('detailed_datasets', []),
+            adjuster=ADJUSTERS
+        )
+
+rule classify_er:
+    input:
+        # Paired dataset files - depend on adjust_paired workflow
+        paired_files=lambda wildcards: [
+            f"{PAIRED_DIR}/{dataset}/{wildcards.adjuster}.csv"
+            for dataset in PAIRED_DATASETS
+        ],
+        # Single dataset files
+        single_files=lambda wildcards: [
+            f"{GOLD_DIR}/{dataset}/{wildcards.adjuster}.csv"
+            for dataset in SINGLE_DATASETS
+            if Path(f"{GOLD_DIR}/{dataset}/{wildcards.adjuster}.csv").exists()
+        ],
+        script=SCRIPTS_DIR + "/HGB_classify_er.py"
+    output:
+        OUTPUT_DIR + "/er_classification_{adjuster}.csv"
+    params:
+        single_names=SINGLE_DATASETS,
+        classifier=CLASSIFIER,
+        pred_col=PREDICTION_COL,
+        source_col=SOURCE_COL,
+        n_repeats=N_REPEATS,
+        n_splits=N_SPLITS,
+        num_workers=NUM_WORKERS
+    resources:
+        mem_mb=16000,
+        runtime=360
+    threads: NUM_WORKERS
+    log:
+        "logs/classify_{adjuster}.log"
+    shell:
+        """
+        export PYTHONPATH="/scripts:$PYTHONPATH"
+        
+        # Filter to only existing files
+        paired_existing=""
+        for f in {input.paired_files}; do
+            if [ -f "$f" ]; then
+                paired_existing="$paired_existing $f"
+            fi
+        done
+        
+        single_existing=""
+        for f in {input.single_files}; do
+            if [ -f "$f" ]; then
+                single_existing="$single_existing $f"
+            fi
+        done
+        
+        # Check if we have any files to process
+        if [ -z "$paired_existing" ] && [ -z "$single_existing" ]; then
+            echo "No input files found for adjuster {wildcards.adjuster}" > {log}
+            touch {output}
+            exit 0
+        fi
+        
+        python {input.script} \
+            --combined-list $paired_existing \
+            --single-list $single_existing \
+            --single-source-names {params.single_names} \
+            --output {output} \
+            --adjustment {wildcards.adjuster} \
+            --classifier {params.classifier} \
+            --prediction-column {params.pred_col} \
+            --source-column {params.source_col} \
+            --n {params.n_repeats} \
+            --n-splits {params.n_splits} \
+            --num-workers {params.num_workers} \
+            &> {log}
+        """
+
+rule detailed_analysis:
+    input:
+        data=PAIRED_DIR + "/{dataset}/{adjuster}.csv",
+        script=SCRIPTS_DIR + "/hist_gradient_er_classification.py"
+    output:
+        summary=OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_summary.csv",
+        metrics=OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_all.csv",
+        confusion=OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_confusion.txt"
+    params:
+        cache_dir=config.get('cache_dir', '/data/.cache/'),
+        n_repeats=config.get('detailed_n_repeats', 2)
+    resources:
+        mem_mb=8000,
+        runtime=120
+    threads: 1
+    log:
+        "logs/detailed_{dataset}_{adjuster}.log"
+    shell:
+        """
+        export PYTHONPATH="/scripts:$PYTHONPATH"
+        
+        python {input.script} \
+            --input-data {input.data} \
+            --summary {output.summary} \
+            --output {output.metrics} \
+            --confusion-matrix {output.confusion} \
+            --adjustment {wildcards.adjuster} \
+            --cache-dir {params.cache_dir} \
+            --n-repeats {params.n_repeats} \
+            &> {log}
+        """

@@ -1,0 +1,34 @@
+data_directory: "/data/paired_datasets"
+adjust_script: "../adjust/adjust.R"
+
+# Define adjusters to run in parallel
+adjusters_parallel:
+  - min_mean
+  - npn
+  - ranked1
+  - ranked2
+  - ranked_batch
+
+# Define adjusters to run sequentially (one at a time)
+adjusters_sequential:
+  - mnn
+  - gmm
+  - gmm_global_simple
+  - gmm_global_npn
+  - gmm_affine
+
+# Define adjusters that use target columns
+adjusters_target: []
+
+# Auto-discover datasets matching pattern (gse*)
+# The Snakefile will use glob_wildcards to find all gse* directories
+dataset_pattern: "gse*"
+
+# Default batch column for paired datasets
+default_batch_col: "meta_source"
+
+# Batch columns for specific datasets (if different from default)
+batch_cols: {}
+
+# Target columns for specific adjustments
+target_cols: {}

@@ -23,6 +23,18 @@ class AdditiveShiftDescription(BatchEffectDescription):
             "shift_vector": self.shift,
         }
     
+    def extract_shift_scale(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Extract shift and scale for inverse transformation.
+        
+        Forward: Y = X + shift_amount
+        Inverse: X = Y - shift_amount = Y * 1.0 + (-shift_amount)
+        """
+        n_features = len(self.shift)
+        shift = -self.shift
+        scale = np.ones(n_features)
+        return shift, scale
+    
 # Think about how to add a global shift
 class AdditiveShiftEffect(BaseBatchEffect):
     """
