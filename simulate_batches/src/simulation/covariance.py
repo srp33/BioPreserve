@@ -135,3 +135,21 @@ class CovarianceEffect(BaseBatchEffect):
             metadata=split.metadata,
             description=descriptions,
         )
+    
+    def extract_shift_scale(self) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+        """
+        Returns diagonal approximation of shift and scale per batch.
+        Only suitable for combining with other diagonal effects.
+        """
+        result: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+        for batch_id, desc in self.last_results.items():  # or last_description per batch
+            # X_original = desc.X_original
+            # D, C = desc.D, desc.C
+            # Approximate inversion: shift = -C, scale = 1/D
+            n_features = len(desc.D)
+            shift = -desc.C
+            scale = 1.0 / desc.D
+            result[batch_id] = (shift, scale)
+
+        return result

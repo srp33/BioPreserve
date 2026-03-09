@@ -65,19 +65,13 @@ class AdditiveShiftEffect(BaseBatchEffect):
     
     def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         """
-        Return combined shift and scale for inverse transformation.
-        Uses the stored last_shift from apply().
+        Returns per-batch shift and scale vectors for inversion.
         """
-        n_features = X_batch.shape[1]
-        shift = np.zeros(n_features)
-
-        # Here we combine batch shifts by taking a mean across batches
-        # This is okay if we only want a global inverse approximation
-        for batch_desc in self.last_shift.values():
-            shift += batch_desc.shift
-        shift /= len(self.last_shift)  # average across batches
-        scale = np.ones(n_features)
-        return -shift, scale
+        shift_scale = {}
+        for batch_id, desc in self.last_shift.items():
+            n_features = len(desc.shift)
+            shift_scale[batch_id] = (-desc.shift, np.ones(n_features))
+        return shift_scale
 
 
 """

@@ -64,12 +64,9 @@ class MultiplicativeScaleEffect(BaseBatchEffect):
             description=descriptions,
         )
     
-    def extract_effect(self, X_batch):
-        if not self.last_scaling:
-            return np.zeros(n_features), np.ones(n_features)
-        n_features = X_batch.shape[1]
-        scale = np.ones(n_features)
-        for desc in self.last_scaling.values():
-            scale *= desc.scaling
-        shift = np.zeros(n_features)
-        return shift, 1 / scale  # for inversion
+    def extract_shift_scale(self) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+        shift_scale = {}
+        for batch_id, desc in self.last_scaling.items():
+            n_features = len(desc.scaling)
+            shift_scale[batch_id] = (np.zeros(n_features), 1/desc.scaling)  # shift=0, scale=1/scaling
+        return shift_scale
