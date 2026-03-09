@@ -1,5 +1,4 @@
 from __future__ import annotations
-from dataclasses import dataclass
 import numpy as np
 import pandas as pd 
 
@@ -11,16 +10,25 @@ class AdditiveShiftDescription(BatchEffectDescription):
     Stores true additive batch shifts
     """
 
-    def __init__(self, shift: np.ndarray):
-        self.shift = shift
+    def __init__(self, shifts: dict[str, pd.Series], batch_labels: pd.Series):
+        self.shifts = shifts
+        self.batch_labels = batch_labels
 
     def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        return X_batch - self.shift
+        if not set(self.shifts.keys()).issubset(set(self.batch_labels.unique())):
+            raise ValueError("Shift description batches do not match batch labels.")
+        X = X_batch.copy()
+
+        for batch_id, shift in self.shifts.items():
+            mask = self.batch_labels == batch_id
+            X.loc[mask] = X.loc[mask] - shift
+
+        return X
     
     def parameters(self) -> dict:
         return {
             "type": "additive_shift",
-            "shift_vector": self.shift,
+            "shift_vector": self.shifts,
         }
     
 # Think about how to add a global shift
@@ -32,53 +40,22 @@ class AdditiveShiftEffect(BaseBatchEffect):
     def __init__(self, scale: float = 1.0, random_state=None):
         super().__init__(random_state)
         self.scale = scale
-        self.last_shift = None
         
-    def apply(self, X: pd.DataFrame, split: BatchSplit,) -> BatchEffectResult:
+class AdditiveShiftEffect:
+    def __init__(self, scale: float = 1.0, random_state=None):
+        self.scale = scale
+        self.rng = np.random.default_rng(random_state)
 
-        batch_labels = split.batch_labels
-        unique_batches = batch_labels.unique()
+    def apply(self, X: pd.DataFrame, batch_labels: pd.Series):
+        batch_parameters = {}
         X_batch = X.copy()
-        self.last_shift = {}
-
-        n_features = X.shape[1]
-
-        for batch_id in unique_batches:
-
+        for batch_id in batch_labels.unique():
             mask = batch_labels == batch_id
-            X_sub = X.loc[mask]
-
-            shift = self.rng.normal(0, self.scale, size=n_features)
-
-            X_shifted = X_sub + shift
-
-            X_batch.loc[mask] = X_shifted
-
-            self.last_shift[batch_id] = AdditiveShiftDescription(shift=shift)
-
-        return BatchEffectResult(
-            X_original=X,
-            X_batch=X_batch,
-            metadata=split.metadata,
-            description=self.last_shift,
-        )
-    
-    def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Return combined shift and scale for inverse transformation.
-        Uses the stored last_shift from apply().
-        """
-        n_features = X_batch.shape[1]
-        shift = np.zeros(n_features)
-
-        # Here we combine batch shifts by taking a mean across batches
-        # This is okay if we only want a global inverse approximation
-        for batch_desc in self.last_shift.values():
-            shift += batch_desc.shift
-        shift /= len(self.last_shift)  # average across batches
-        scale = np.ones(n_features)
-        return -shift, scale
-
+            shift_vec = self.rng.normal(0, self.scale, size=X.shape[1])
+            X_batch.loc[mask] += shift_vec
+            batch_parameters[batch_id] = {"shift": shift_vec, "scale": np.ones(X.shape[1])}
+        desc = BatchEffectDescription(batch_parameters, batch_labels)
+        return X_batch, desc
 
 """
 Could also choose Sparse shift (only 20% of genes affected), block shift (shift only specific gene modules), heteroskedastsic shift (shift magnitude proportional to gene mean)

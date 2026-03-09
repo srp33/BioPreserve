@@ -11,22 +11,25 @@ class BatchEffectResult:
     X_original: pd.DataFrame
     X_batch: pd.DataFrame
     metadata: pd.DataFrame
-    description: "BatchEffectDescription"
+    description: BatchEffectDescription
 
-class BatchEffectDescription(ABC):
+class BatchEffectDescription:
     """
-    Describes the true batch transformation applied.
-    Must be able to invert or expose true parameters.
+    Base class: stores true per-batch shift and scale vectors.
     """
+    def __init__(self, batch_parameters: dict[str, dict], batch_labels: pd.Series):
+        """
+        batch_parameters: dict mapping batch_id -> {"shift": np.ndarray, "scale": np.ndarray}
+        """
+        self.batch_parameters = batch_parameters
+        self.batch_labels = batch_labels
 
-    @abstractmethod
-    def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        ...
-    
-    @abstractmethod
-    def parameters(self) -> dict:
-        ...
-
+    def invert(self, X_batch: pd.DataFrame):
+        X_hat = X_batch.copy()
+        for batch_id, params in self.batch_parameters.items():
+            mask = self.batch_labels == batch_id
+            X_hat.loc[mask] = (X_batch.loc[mask] - params["shift"]) / params["scale"]
+        return X_hat
 
 class BaseBatchEffect(ABC):
     """
@@ -45,11 +48,3 @@ class BaseBatchEffect(ABC):
     ) -> BatchEffectResult:
         ...
         
-    def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Returns vectors for inverting the applied effect.
-        """
-        n_features = X_batch.shape[1]
-        shift = np.zeros(n_features)
-        scale = np.ones(n_features)
-        return shift, scale

@@ -13,26 +13,28 @@ class CovarianceDescription(BatchEffectDescription):
     """
     Stores approximate inversion for covariance 
     """
-    D: np.ndarray
-    M: coo_matrix | None
-    C: np.ndarray
-    X_original: pd.DataFrame
+    def __init__(
+        self, 
+        covariance: dict[str, dict], 
+        batch_labels: pd.Series
+    ):
+        self.covariance = covariance
+        self.batch_labels = batch_labels
 
-    def find_matrices(self, X_batch: pd.DataFrame):
+
+    def find_matrices(self, X_batch: pd.DataFrame, batch_id: str):
         """
         Find optimal inverse shift and scale matrices.
         """
-
         # True inverse would be X = (Y - C)(D + M)-1
+        params = self.covariance[batch_id]
 
-        X = self.X_original.values
-        Y = X_batch.values
+        X = params["X_original"].values
+        Y = X_batch.loc[self.batch_labels == batch_id].values
 
-        # Means
+        # Mean and Center
         mean_X = X.mean(axis=0)
         mean_Y = Y.mean(axis=0)
-
-        # Centered
         X_c = X - mean_X
         Y_c = Y - mean_Y
 
@@ -49,22 +51,28 @@ class CovarianceDescription(BatchEffectDescription):
         return D_inv, C_inv
 
     def invert(self, X_batch: pd.DataFrame):
-        D_inv, C_inv = self.find_matrices(X_batch)
-        X = self.X_original.values 
-        Y = X_batch.values 
-        X_hat = Y @ np.diag(D_inv) + C_inv.reshape(1, -1)
-        X_delta = X_hat - X
-        mse = np.mean(X_delta**2)
+        X_hat = X_batch.copy()
+        mse_total = 0.0
 
-        # return X_delta.round(4) #, 
-        return X_hat
+        for batch_id in self.covariance.keys():
+            mask = self.batch_labels == batch_id
+            D_inv, C_inv = self.find_matrices(X_batch, batch_id)
+            Y = X_batch.loc[mask].values
+            X_orig = self.covariance[batch_id]["X_original"].values
+
+            # Compute shift and scale approximation
+            X_approx = Y * D_inv + C_inv.reshape(1, -1)
+            X_hat.loc[mask] = X_approx
+
+            mse_total += np.mean((X_approx - X_orig) ** 2)
+
+        return X_hat, mse_total / len(self.covariance)
     
     def parameters(self) -> dict:
         # Gives true inversion ???
         return {
-            "D": self.D,
-            "M": self.M,
-            "C": self.C
+            "type": "covariance_effect", 
+            "covariance_matrices": self.covariance,
         }
 
 class CovarianceEffect(BaseBatchEffect):
@@ -99,11 +107,11 @@ class CovarianceEffect(BaseBatchEffect):
     
     def apply(self, X: pd.DataFrame, split: BatchSplit) -> BatchEffectResult:
 
-        X_batch = X.copy()
-        descriptions = {}
-
         batch_labels = split.batch_labels
         unique_batches = batch_labels.unique()
+
+        X_batch = X.copy()
+        covariance = {}
 
         for batch_id in unique_batches:
             mask = batch_labels == batch_id
@@ -123,15 +131,20 @@ class CovarianceEffect(BaseBatchEffect):
 
             X_batch.loc[mask] = Y
 
-            descriptions[batch_id] = CovarianceDescription(
-                D=D_vec,
-                M=M,
-                C=C,
-                X_original=X_sub.copy(),
-            )
+            covariance[batch_id] = {
+                "D" : D_vec,
+                "M" : M,
+                "C" : C,
+                "X_original" : X_sub.copy()
+            }
+
+        description = CovarianceDescription(
+            covariance=covariance,
+            batch_labels=batch_labels
+        )
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
             metadata=split.metadata,
-            description=descriptions,
+            description=description,
         )

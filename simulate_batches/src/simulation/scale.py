@@ -10,66 +10,37 @@ class MultiplicativeScaleDescription(BatchEffectDescription):
     Stores true multiplicative batch scaling
     """
 
-    def __init__(self, scaling: np.ndarray):
-        self.scaling = scaling
+    def __init__(self, scalings: dict[str, pd.Series], batch_labels: pd.Series):
+        self.scalings = scalings
+        self.batch_labels = batch_labels
 
     def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        return X_batch / self.scaling
-    
+        X = X_batch.copy()
+
+        for batch_id, scaling in self.scalings.items():
+            mask = self.batch_labels == batch_id
+            X.loc[mask] = X.loc[mask] / scaling 
+
+        return X
+
     def parameters(self) -> dict:
         return {
             "type": "multiplicative_scale",
-            "scale_vector": self.scaling,
+            "scale_vector": self.scalings,
         }
     
 class MultiplicativeScaleEffect(BaseBatchEffect):
-    """
-    Simulates multiplicative batch-specific scaling
-    """
-
-    def __init__(self, scale: float = 1.0, random_state = None):
-        super().__init__(random_state)
+    def __init__(self, scale: float = 1.0, random_state=None):
         self.scale = scale
-        self.last_scaling = None
+        self.rng = np.random.default_rng(random_state)
 
-    def apply(self, X: pd.DataFrame, split: BatchSplit) -> BatchEffectResult:
-
-        batch_labels = split.batch_labels
-        unique_batches = batch_labels.unique()
-        
+    def apply(self, X: pd.DataFrame, batch_labels: pd.Series):
+        batch_parameters = {}
         X_batch = X.copy()
-        descriptions = {}
-
-        n_features = X.shape[1]
-
-        # Log-normal scaling? 
-        for batch_id in unique_batches:
-            
+        for batch_id in batch_labels.unique():
             mask = batch_labels == batch_id
-            X_sub = X.loc[mask]
-
-            scaling = self.rng.lognormal(mean=0.0, sigma=self.scale, size=n_features)
-            
-            X_scaled = X_sub * scaling
-
-            X_batch.loc[mask] = X_scaled
-
-            descriptions[batch_id] = MultiplicativeScaleDescription(scaling=scaling)
-
-        self.last_scaling = descriptions
-        return BatchEffectResult(
-            X_original=X,
-            X_batch=X_batch,
-            metadata=split.metadata,
-            description=descriptions,
-        )
-    
-    def extract_effect(self, X_batch):
-        if not self.last_scaling:
-            return np.zeros(n_features), np.ones(n_features)
-        n_features = X_batch.shape[1]
-        scale = np.ones(n_features)
-        for desc in self.last_scaling.values():
-            scale *= desc.scaling
-        shift = np.zeros(n_features)
-        return shift, 1 / scale  # for inversion
+            scale_vec = self.rng.normal(1.0, self.scale, size=X.shape[1])
+            X_batch.loc[mask] *= scale_vec
+            batch_parameters[batch_id] = {"shift": np.zeros(X.shape[1]), "scale": scale_vec}
+        desc = BatchEffectDescription(batch_parameters, batch_labels)
+        return X_batch, desc
