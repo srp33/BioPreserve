@@ -1,0 +1,41 @@
+# config.yaml
+
+output_folder: "outputs"
+
+# Metadata features from the main pipeline (shared across all adjusters)
+X_train: "metadata/metadata_train.csv"
+X_test: "metadata/metadata_test.csv"
+
+# Adjusters: name -> {train: gene_expr_train_path, test: gene_expr_test_path}
+# Each adjuster supplies its own train and test gene expression CSVs so the
+# downstream classifier is trained and evaluated on consistently adjusted data.
+adjusters:
+  unadjusted:
+    train: "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv"
+  bayesian_shift_scale:
+    train: "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv"
+  aligned:
+    train: "adjusters/aligned_aligned_subset_train_selected_genes.csv"
+    test: "adjusters/aligned_aligned_subset_test_selected_genes.csv"
+  mnn:
+    train: "adjusters/adjusted_mnn_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/adjusted_mnn_2studies_test_metabric_test_selected_genes.csv"
+  min_mean:
+    train: "adjusters/adjusted_min_mean_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/adjusted_min_mean_2studies_test_metabric_test_selected_genes.csv"
+  log_transformed:
+    train: "adjusters/adjusted_log_transformed_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/adjusted_log_transformed_2studies_test_metabric_test_selected_genes.csv"
+  log_combat:
+    train: "adjusters/adjusted_log_combat_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/adjusted_log_combat_2studies_test_metabric_test_selected_genes.csv"
+  gmm:
+    train: "adjusters/adjusted_gmm_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/adjusted_gmm_2studies_test_metabric_test_selected_genes.csv"
+
+# Metadata columns to treat as continuous targets (HistGradientBoostingRegressor + R²)
+# All other metadata columns are treated as classification targets (MCC)
+continuous_metadata:
+  - "meta_age_at_diagnosis"

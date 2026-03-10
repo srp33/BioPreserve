@@ -1,0 +1,21 @@
+# config.yaml
+
+output_folder: "outputs"
+data_folder: "data"
+
+# Input data files (relative to data_folder)
+train_file: "train_gse62944_tumor_selected_genes.csv"
+test_file: "test_metabric_selected_genes.csv"
+
+# Columns to drop after selecting metadata + gene
+cols_to_drop:
+  - "meta_source"
+
+# Bayesian regression priors
+slope_log_sd: 10
+intercept_sd: 20
+
+# Bayesian sampling
+draws: 1000
+rhat_threshold: 1.05
+max_divergences: 10
