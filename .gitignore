@@ -12,3 +12,4 @@ core.*
 .pixi
 .nextflow
 .snakemake
+*dryrun.txt
