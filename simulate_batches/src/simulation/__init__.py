@@ -8,7 +8,7 @@ from .base import (
 )
 
 from .split import RandomBatchSplit, ConfoundedSplit
-from .shift import AdditiveShiftEffect, AdditiveShiftDescription
+from .shift import AdditiveShiftEffect
 from .scale import MultiplicativeScaleEffect
 
 __all__ = [

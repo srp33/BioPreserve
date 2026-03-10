@@ -5,13 +5,30 @@ import pandas as pd
 import numpy as np
 from .split import BatchSplit
 
-
-@dataclass
 class BatchEffectResult:
-    X_original: pd.DataFrame
-    X_batch: pd.DataFrame
-    metadata: pd.DataFrame
-    description: "BatchEffectDescription"
+    def __init__(self, X_original: pd.DataFrame, X_batch: pd.DataFrame, batch_labels: pd.Series, batch_shift: dict[str, np.ndarray], batch_scale: dict[str, np.ndarray]):
+        self.X_original = X_original
+        self.X_batch = X_batch
+        self.batch_labels = batch_labels
+        self.batch_shift = batch_shift
+        self.batch_scale = batch_scale
+
+    def invert(self) -> pd.DataFrame:
+        """
+        Apply the ground-truth inverse transformation. 
+        """
+        X = self.X_batch.copy()
+        batch_labels = self.batch_labels
+
+        for batch_id in self.batch_shift:
+            mask = batch_labels == batch_id
+            shift = self.batch_shift[batch_id]
+            scale = self.batch_scale[batch_id]
+
+            X.loc[mask] = (X.loc[mask] - shift) / scale
+
+        return X
+
 
 class BatchEffectDescription(ABC):
     """
@@ -25,6 +42,13 @@ class BatchEffectDescription(ABC):
     
     @abstractmethod
     def parameters(self) -> dict:
+        ...
+
+    @abstractmethod
+    def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Returns vectors for inverting the applied effect.
+        """
         ...
 
 
@@ -44,12 +68,3 @@ class BaseBatchEffect(ABC):
         split: BatchSplit,
     ) -> BatchEffectResult:
         ...
-        
-    def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Returns vectors for inverting the applied effect.
-        """
-        n_features = X_batch.shape[1]
-        shift = np.zeros(n_features)
-        scale = np.ones(n_features)
-        return shift, scale

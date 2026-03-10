@@ -54,53 +54,21 @@ batch_split2 = splitter2.apply(X, multi_class_metadata)
 # 3. Initialize batch effects
 # --------------------------
 shift_effect = AdditiveShiftEffect(scale=2.0, random_state=42)
-scale_effect = MultiplicativeScaleEffect(scale=5.0, random_state=42)
-cov_effect = CovarianceEffect(scale_std=0.1, shift_std=0.2, cov_sparsity=0.01, cov_scale=0.02, random_state=42)
+# scale_effect = MultiplicativeScaleEffect(scale=5.0, random_state=42)
+# cov_effect = CovarianceEffect(scale_std=0.1, shift_std=0.2, cov_sparsity=0.01, cov_scale=0.02, random_state=42)
 
 # --------------------------
 # 4. Apply batch effects
 # --------------------------
 shift_result = shift_effect.apply(X, split=batch_split)
-scale_result = scale_effect.apply(X, split=batch_split)
-cov_result = cov_effect.apply(X_variance, split=batch_split)
+# scale_result = scale_effect.apply(X, split=batch_split)
+# cov_result = cov_effect.apply(X_variance, split=batch_split)
 
 # --------------------------
-# 5. Helper: Test per-batch inversion
+# 5. Test Inversion
 # --------------------------
-def test_inversion(effect_result, batch_labels):
-    X_hat = effect_result.X_batch.copy()
-    
-    for batch_id, desc in effect_result.description.items():
-        mask = batch_labels == batch_id
-        X_hat.loc[mask] = desc.invert(effect_result.X_batch.loc[mask])
 
-    # Compare inverted vs original
-    if np.allclose(X_hat.values, effect_result.X_original.values, rtol=1e-5, atol=1e-8):
-        print(f"[PASS] {effect_result.__class__.__name__} inversion successful.")
-    else:
-        diff = np.abs(X_hat.values - effect_result.X_original.values)
-        print(f"[WARN] {effect_result.__class__.__name__} inversion not exact. Max diff = {diff.max()}")
-
-    return X_hat
-
-# --------------------------
-# 6. Run inversion tests
-# --------------------------
-# test_inversion(cov_result, batch_split.batch_labels)
-# for result in [shift_result, scale_result, cov_result]:
-#     test_inversion(result, batch_split.batch_labels)
-
-# --------------------------
-# 7. Optional: Inspect results
-# --------------------------
-# print("\n--- Shift Effect ---")
-# print("Original Data:\n", shift_result.X_original)
-# print("Batch Data:\n", shift_result.X_batch)
-
-# print("\n--- Scale Effect ---")
-# print("Batch Data:\n", scale_result.X_batch)
-
-print("\n--- Covariance Effect ---")
-print("Original Data:\n", cov_result.X_original)
-print("Batch Data:\n", cov_result.X_batch)
-print("Inverted Data:\n", test_inversion(cov_result, batch_split.batch_labels))
+print("\n--- Shift Effect ---")
+print("Original Data:\n", shift_result.X_original)
+print("Batch Data:\n", shift_result.X_batch)
+print("Inverted Data:\n", shift_result.invert())
