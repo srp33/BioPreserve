@@ -1,0 +1,64 @@
+import os
+import shlex
+
+configfile: "config.yaml"
+
+BASE = workflow.basedir
+OUTPUT_FOLDER = config["output_folder"]
+X_TRAIN = os.path.join(BASE, config["X_train"])
+X_TEST = os.path.join(BASE, config["X_test"])
+
+
+rule all:
+    input:
+        f"{OUTPUT_FOLDER}/heatmap.png",
+
+
+rule cross_dataset_classify:
+    input:
+        X_train=X_TRAIN,
+        X_test=X_TEST,
+        adjuster_files=[
+            os.path.join(BASE, path)
+            for adj in config["adjusters"].values()
+            for path in [adj["train"], adj["test"]]
+        ],
+    output:
+        results=f"{OUTPUT_FOLDER}/classification_results.csv",
+    params:
+        adjusters=" ".join(
+            shlex.quote(f"{k}={os.path.join(BASE, v['train'])}:{os.path.join(BASE, v['test'])}")
+            for k, v in config["adjusters"].items()
+        ),
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+    log:
+        "logs/cross_dataset_classify.log"
+    shell:
+        """
+        python scripts/cross_dataset_classify.py \
+            --X-train "{input.X_train}" \
+            --X-test "{input.X_test}" \
+            --adjusters {params.adjusters} \
+            --continuous-metadata {params.continuous_metadata} \
+            --output "{output.results}" \
+            &> "{log}"
+        """
+
+
+rule plot_heatmap:
+    input:
+        results=f"{OUTPUT_FOLDER}/classification_results.csv",
+    output:
+        heatmap=f"{OUTPUT_FOLDER}/heatmap.png",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+    log:
+        "logs/plot_heatmap.log"
+    shell:
+        """
+        python scripts/plot_heatmap.py \
+            --results "{input.results}" \
+            --output "{output.heatmap}" \
+            --continuous-metadata {params.continuous_metadata} \
+            &> "{log}"
+        """

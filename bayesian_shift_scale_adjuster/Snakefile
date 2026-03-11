@@ -1,0 +1,77 @@
+configfile: "config.yaml"
+
+OUTPUT_FOLDER = config["output_folder"]
+DATA_FOLDER = config["data_folder"]
+
+TRAIN_FILE = f"{DATA_FOLDER}/{config['train_file']}"
+TEST_FILE = f"{DATA_FOLDER}/{config['test_file']}"
+
+
+rule all:
+    input:
+        f"{OUTPUT_FOLDER}/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        f"{OUTPUT_FOLDER}/metrics.csv",
+
+
+rule clean_data:
+    input:
+        train=TRAIN_FILE,
+        test=TEST_FILE,
+    output:
+        train=f"{OUTPUT_FOLDER}/gse_clean.csv",
+        test=f"{OUTPUT_FOLDER}/metabric_clean.csv",
+    params:
+        cols_to_drop=" ".join(config["cols_to_drop"]),
+    log:
+        "logs/clean_data.log"
+    shell:
+        """
+        python scripts/clean_data.py \
+            --train {input.train} \
+            --test {input.test} \
+            --output-train {output.train} \
+            --output-test {output.test} \
+            --cols-to-drop {params.cols_to_drop} \
+            &> {log}
+        """
+
+
+rule fit_and_shift:
+    input:
+        train=f"{OUTPUT_FOLDER}/gse_clean.csv",
+        test=f"{OUTPUT_FOLDER}/metabric_clean.csv",
+    output:
+        y_test_shifted=f"{OUTPUT_FOLDER}/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        precision_params=f"{OUTPUT_FOLDER}/precision_matrix.csv",
+        metrics_converged=f"{OUTPUT_FOLDER}/metrics.csv",
+        X_train=f"{OUTPUT_FOLDER}/metadata_train.csv",
+        X_test=f"{OUTPUT_FOLDER}/metadata_test.csv",
+        y_train=f"{OUTPUT_FOLDER}/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        y_test=f"{OUTPUT_FOLDER}/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+    params:
+        slope_log_sd=config["slope_log_sd"],
+        intercept_sd=config["intercept_sd"],
+        draws=config["draws"],
+        rhat_threshold=config["rhat_threshold"],
+        max_divergences=config["max_divergences"],
+    log:
+        "logs/fit_and_shift.log"
+    shell:
+        """
+        python scripts/fit_and_shift.py \
+            --train {input.train} \
+            --test {input.test} \
+            --params {output.precision_params} \
+            --metrics-converged {output.metrics_converged} \
+            --output {output.y_test_shifted} \
+            --slope-log-sd {params.slope_log_sd} \
+            --intercept-sd {params.intercept_sd} \
+            --draws {params.draws} \
+            --rhat-threshold {params.rhat_threshold} \
+            --max-divergences {params.max_divergences} \
+            --X-train-output {output.X_train} \
+            --X-test-output {output.X_test} \
+            --y-train-output {output.y_train} \
+            --y-test-output {output.y_test} \
+            &> {log}
+        """
