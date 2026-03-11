@@ -32,7 +32,7 @@ class BaseBatchSplit:
         raise NotImplementedError
     
 
-class RandomBatchSplit(BaseBatchSplit):
+class RandomSplit(BaseBatchSplit):
     """
     Uniform Random Assignment.
     """

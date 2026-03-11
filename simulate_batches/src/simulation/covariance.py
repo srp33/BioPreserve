@@ -5,7 +5,7 @@ from scipy.sparse import coo_matrix, diags
 from scipy.linalg import sqrtm, inv
 from dataclasses import dataclass
 
-from .base import BaseBatchEffect, BatchEffectResult, BatchEffectDescription
+from .base import BaseBatchEffect, BatchEffectResult
 from .split import BatchSplit
 
 @dataclass
@@ -24,7 +24,6 @@ class CovarianceDescription(BatchEffectDescription):
         """
 
         # True inverse would be X = (Y - C)(D + M)-1
-
         X = self.X_original.values
         Y = X_batch.values
 
@@ -142,6 +141,26 @@ class CovarianceEffect(BaseBatchEffect):
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
-            metadata=split.metadata,
-            description=descriptions,
+            batch_labels=batch_labels,
+            # FILL IN HERE
+            #batch_shift=shift,
+            #batch_scale=scale,
         )
+    
+    def extract_shift_scale(self) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+        """
+        Returns diagonal approximation of shift and scale per batch.
+        Only suitable for combining with other diagonal effects.
+        """
+        result: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+        for batch_id, desc in self.last_results.items():  # or last_description per batch
+            # X_original = desc.X_original
+            # D, C = desc.D, desc.C
+            # Approximate inversion: shift = -C, scale = 1/D
+            n_features = len(desc.D)
+            shift = -desc.C
+            scale = 1.0 / desc.D
+            result[batch_id] = (shift, scale)
+
+        return result
