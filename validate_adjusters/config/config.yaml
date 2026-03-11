@@ -19,6 +19,9 @@ adjusters:
   bayesian_shift_scale:
     train: "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"
     test: "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv"
+  bayesian_effective_shift_only:
+    train: "adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_train_selected_genes.csv"
+    test: "adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv"
   aligned:
     train: "adjusters/aligned_aligned_subset_train_selected_genes.csv"
     test: "adjusters/aligned_aligned_subset_test_selected_genes.csv"

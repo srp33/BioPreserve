@@ -15,6 +15,8 @@ rule all:
     input:
         f"{OUTPUT_FOLDER}/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
         f"{OUTPUT_FOLDER}/metrics.csv",
+        f"{OUTPUT_FOLDER}/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+        f"{OUTPUT_FOLDER}/adjusted_bayesian_shift_only_model_2studies_test_metabric_test_selected_genes.csv",
 
 
 rule clean_data:
@@ -73,6 +75,90 @@ rule fit_and_shift:
             --draws {params.draws} \
             --rhat-threshold {params.rhat_threshold} \
             --max-divergences {params.max_divergences} \
+            --X-train-output {output.X_train} \
+            --X-test-output {output.X_test} \
+            --y-train-output {output.y_train} \
+            --y-test-output {output.y_test} \
+            &> {log}
+        """
+
+
+rule fit_and_shift_effective_only:
+    input:
+        train=f"{OUTPUT_FOLDER}/gse_clean.csv",
+        test=f"{OUTPUT_FOLDER}/metabric_clean.csv",
+    output:
+        y_test_shifted=f"{OUTPUT_FOLDER}/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+        precision_params=f"{OUTPUT_FOLDER}/precision_matrix_effective_shift_only.csv",
+        metrics_converged=f"{OUTPUT_FOLDER}/metrics_effective_shift_only.csv",
+        X_train=f"{OUTPUT_FOLDER}/metadata_train_effective_shift_only.csv",
+        X_test=f"{OUTPUT_FOLDER}/metadata_test_effective_shift_only.csv",
+        y_train=f"{OUTPUT_FOLDER}/adjusted_bayesian_effective_shift_only_2studies_test_metabric_train_selected_genes.csv",
+        y_test=f"{OUTPUT_FOLDER}/unadjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+    params:
+        slope_log_sd=config["slope_log_sd"],
+        intercept_sd=config["intercept_sd"],
+        draws=config["draws"],
+        rhat_threshold=config["rhat_threshold"],
+        max_divergences=config["max_divergences"],
+    log:
+        "logs/fit_and_shift_effective_only.log"
+    shell:
+        """
+        python scripts/fit_and_shift.py \
+            --train {input.train} \
+            --test {input.test} \
+            --params {output.precision_params} \
+            --metrics-converged {output.metrics_converged} \
+            --output {output.y_test_shifted} \
+            --slope-log-sd {params.slope_log_sd} \
+            --intercept-sd {params.intercept_sd} \
+            --draws {params.draws} \
+            --rhat-threshold {params.rhat_threshold} \
+            --max-divergences {params.max_divergences} \
+            --only-effective-shifts \
+            --X-train-output {output.X_train} \
+            --X-test-output {output.X_test} \
+            --y-train-output {output.y_train} \
+            --y-test-output {output.y_test} \
+            &> {log}
+        """
+
+
+rule fit_and_shift_shift_only_model:
+    input:
+        train=f"{OUTPUT_FOLDER}/gse_clean.csv",
+        test=f"{OUTPUT_FOLDER}/metabric_clean.csv",
+    output:
+        y_test_shifted=f"{OUTPUT_FOLDER}/adjusted_bayesian_shift_only_model_2studies_test_metabric_test_selected_genes.csv",
+        precision_params=f"{OUTPUT_FOLDER}/precision_matrix_shift_only_model.csv",
+        metrics_converged=f"{OUTPUT_FOLDER}/metrics_shift_only_model.csv",
+        X_train=f"{OUTPUT_FOLDER}/metadata_train_shift_only_model.csv",
+        X_test=f"{OUTPUT_FOLDER}/metadata_test_shift_only_model.csv",
+        y_train=f"{OUTPUT_FOLDER}/adjusted_bayesian_shift_only_model_2studies_test_metabric_train_selected_genes.csv",
+        y_test=f"{OUTPUT_FOLDER}/unadjusted_bayesian_shift_only_model_2studies_test_metabric_test_selected_genes.csv",
+    params:
+        slope_log_sd=config["slope_log_sd"],
+        intercept_sd=config["intercept_sd"],
+        draws=config["draws"],
+        rhat_threshold=config["rhat_threshold"],
+        max_divergences=config["max_divergences"],
+    log:
+        "logs/fit_and_shift_shift_only_model.log"
+    shell:
+        """
+        python scripts/fit_and_shift.py \
+            --train {input.train} \
+            --test {input.test} \
+            --params {output.precision_params} \
+            --metrics-converged {output.metrics_converged} \
+            --output {output.y_test_shifted} \
+            --slope-log-sd {params.slope_log_sd} \
+            --intercept-sd {params.intercept_sd} \
+            --draws {params.draws} \
+            --rhat-threshold {params.rhat_threshold} \
+            --max-divergences {params.max_divergences} \
+            --shift-only-model \
             --X-train-output {output.X_train} \
             --X-test-output {output.X_test} \
             --y-train-output {output.y_train} \

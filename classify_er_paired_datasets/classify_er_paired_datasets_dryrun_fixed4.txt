@@ -1,0 +1,27 @@
+Found 0 paired datasets
+Found 0 single datasets
+host: login01
+Building DAG of jobs...
+Job stats:
+job                  count
+-----------------  -------
+adjust_paired_all        1
+total                    1
+
+
+[Tue Mar 10 12:59:12 2026]
+rule adjust_paired_all:
+    jobid: 0
+    reason: Rules with neither input nor output files are always executed.
+    resources: tmpdir=<TBD>
+Job stats:
+job                  count
+-----------------  -------
+adjust_paired_all        1
+total                    1
+
+Reasons:
+    (check individual jobs above for details)
+    neither input nor output:
+        adjust_paired_all
+This was a dry-run (flag -n). The order of jobs does not reflect the order of execution.

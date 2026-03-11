@@ -11,10 +11,67 @@ X_TRAIN = os.path.join(BASE, config["X_train"])
 X_TEST = os.path.join(BASE, config["X_test"])
 
 
+# Get metadata labels from config
+METADATA_LABELS = [
+    'meta_er_status',
+    'meta_menopause_status', 
+    'meta_sex',
+    'meta_age_at_diagnosis',
+    'meta_chemotherapy',
+    'meta_histological_type',
+    'meta_her2_status',
+    'meta_age_at_diagnosis_combined_lt50',
+    'meta_age_at_diagnosis_combined_50_69',
+    'meta_age_at_diagnosis_combined_ge70'
+]
+# Define classifiers for parallel execution
+CLASSIFIERS = ['Random_Forest', 'Gradient_Boosting', 'Logistic_L2', 'ElasticNet_l1_0.15']
+CLASSIFIER_NAMES = {
+    'Random_Forest': 'Random Forest',
+    'Gradient_Boosting': 'Gradient Boosting',
+    'Logistic_L2': 'Logistic (L2)',
+    'ElasticNet_l1_0.15': 'ElasticNet (l1=0.15)'
+}
+
+# DBA training classifiers (used for oracle adjustment methods)
+DBA_CLASSIFIERS = ['histgradient', 'elasticnet', 'logistic', 'randomforest']
+
+# Rule order: specific multi-label DBA rules should be preferred over generic evaluate_adjuster_label
+ruleorder: evaluate_multi_label_dba_shift_only > evaluate_adjuster_label
+ruleorder: evaluate_multi_label_dba_shift_scale > evaluate_adjuster_label
+ruleorder: evaluate_dba_trained_shift_only > evaluate_adjuster_label
+ruleorder: evaluate_dba_trained_shift_scale > evaluate_adjuster_label
+
 rule all:
     input:
         f"{OUTPUT_FOLDER}/heatmap.png",
         f"{OUTPUT_FOLDER}/test_set_cv_results.csv",
+        f"{OUTPUT_FOLDER}/gene_analysis/her2_status_heatmap.png",
+        f"{OUTPUT_FOLDER}/gene_analysis/chemotherapy_informativeness.png",
+        f"{OUTPUT_FOLDER}/oracle_analysis/adjustment_comparison.png",
+        f"{OUTPUT_FOLDER}/debug_analysis/parameter_comparison.png",
+        expand(f"{OUTPUT_FOLDER}/classifier_heatmaps/heatmap_{{classifier}}.png", classifier=CLASSIFIERS),
+        f"{OUTPUT_FOLDER}/optimal_strategy.png",
+        f"{OUTPUT_FOLDER}/dba_analysis/dba_comparison.png",
+        f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/multi_label_comparison.csv",
+        f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/multi_label_comparison.csv",
+        f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/classifier_comparison.csv",
+        f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/classifier_comparison.csv",
+        "adjusters/effective_shifts.csv",
+        f"{OUTPUT_FOLDER}/feature_selection_comparison.csv",
+        # Explicitly request DBA evaluation files to ensure they're generated
+        expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_Shift_Only_Trained_{{training_classifier}}__{{label}}.json",
+            eval_classifier=CLASSIFIERS,
+            training_classifier=DBA_CLASSIFIERS,
+            label=METADATA_LABELS
+        ),
+        expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_Shift_Scale_Trained_{{training_classifier}}__{{label}}.json",
+            eval_classifier=CLASSIFIERS,
+            training_classifier=DBA_CLASSIFIERS,
+            label=METADATA_LABELS
+        ),
 
 
 rule test_set_cv:
@@ -26,6 +83,10 @@ rule test_set_cv:
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
         n_splits=config.get("cv_n_splits", 5)
+    resources:
+        mem_mb=4000,
+        runtime=60
+    threads: 1
     log:
         "logs/test_set_cv.log"
     shell:
@@ -40,6 +101,73 @@ rule test_set_cv:
         """
 
 
+rule create_effective_shift_only:
+    input:
+        unadjusted="../bayesian_shift_scale_adjuster/outputs/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        bayesian_adjusted="../bayesian_shift_scale_adjuster/outputs/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_source="../bayesian_shift_scale_adjuster/outputs/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"
+    output:
+        test="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+        train="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_train_selected_genes.csv",
+        shifts="adjusters/effective_shifts.csv"
+    resources:
+        mem_mb=2000,
+        runtime=10
+    threads: 1
+    log:
+        "logs/create_effective_shift_only.log"
+    shell:
+        """
+        python scripts/create_effective_shift_only.py \
+            --unadjusted {input.unadjusted} \
+            --bayesian-adjusted {input.bayesian_adjusted} \
+            --output-test {output.test} \
+            --output-train {output.train} \
+            --train-source {input.train_source} \
+            --output-shifts {output.shifts} \
+            &> {log}
+        """
+
+
+rule feature_selection_comparison:
+    input:
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        train_unadjusted="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_shift_scale="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_shift_scale="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_shift_only="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_train_selected_genes.csv",
+        test_shift_only="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+    output:
+        results=f"{OUTPUT_FOLDER}/feature_selection_comparison.csv"
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        n_genes="3 5 10 20 50"
+    resources:
+        mem_mb=8000,
+        runtime=120
+    threads: 1
+    log:
+        "logs/feature_selection_comparison.log"
+    shell:
+        """
+        python scripts/feature_selection_comparison.py \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --train-unadjusted {input.train_unadjusted} \
+            --test-unadjusted {input.test_unadjusted} \
+            --train-shift-scale {input.train_shift_scale} \
+            --test-shift-scale {input.test_shift_scale} \
+            --train-shift-only {input.train_shift_only} \
+            --test-shift-only {input.test_shift_only} \
+            --continuous-metadata {params.continuous_metadata} \
+            --n-genes {params.n_genes} \
+            --output {output.results} \
+            &> {log}
+        """
+
+
 rule cross_dataset_classify:
     input:
         X_train=X_TRAIN,
@@ -49,14 +177,28 @@ rule cross_dataset_classify:
             for adj in config["adjusters"].values()
             for path in [adj["train"], adj["test"]]
         ],
+        # Ensure effective shift only is created first
+        effective_shifts="adjusters/effective_shifts.csv",
+        # Ensure multi-label DBA outputs are created (absolute paths)
+        multi_label_dba_shift_only=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_direct.csv"),
+        multi_label_dba_shift_scale=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_direct.csv"),
     output:
         results=f"{OUTPUT_FOLDER}/classification_results.csv",
     params:
-        adjusters=" ".join(
+        adjusters_static=" ".join(
             shlex.quote(f"{k}={os.path.join(BASE, v['train'])}:{os.path.join(BASE, v['test'])}")
             for k, v in config["adjusters"].items()
         ),
+        # Add multi-label DBA adjusters with absolute paths
+        adjusters_dba=lambda wildcards, input: " ".join([
+            shlex.quote(f"multi_label_dba_shift_only={os.path.join(BASE, 'adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv')}:{input.multi_label_dba_shift_only}"),
+            shlex.quote(f"multi_label_dba_shift_scale={os.path.join(BASE, 'adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv')}:{input.multi_label_dba_shift_scale}"),
+        ]),
         continuous_metadata=" ".join(config["continuous_metadata"]),
+    resources:
+        mem_mb=8000,
+        runtime=120
+    threads: 1
     log:
         "logs/cross_dataset_classify.log"
     shell:
@@ -64,7 +206,7 @@ rule cross_dataset_classify:
         python scripts/cross_dataset_classify.py \
             --X-train "{input.X_train}" \
             --X-test "{input.X_test}" \
-            --adjusters {params.adjusters} \
+            --adjusters {params.adjusters_static} {params.adjusters_dba} \
             --continuous-metadata {params.continuous_metadata} \
             --output "{output.results}" \
             &> "{log}"
@@ -79,6 +221,10 @@ rule plot_heatmap:
         heatmap=f"{OUTPUT_FOLDER}/heatmap.png",
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
+    resources:
+        mem_mb=2000,
+        runtime=20
+    threads: 1
     log:
         "logs/plot_heatmap.log"
     shell:
@@ -89,4 +235,653 @@ rule plot_heatmap:
             --output "{output.heatmap}" \
             --continuous-metadata {params.continuous_metadata} \
             &> "{log}"
+        """
+
+
+rule analyze_predictive_genes:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST
+    output:
+        her2_heatmap=f"{OUTPUT_FOLDER}/gene_analysis/her2_status_heatmap.png",
+        chemo_informativeness=f"{OUTPUT_FOLDER}/gene_analysis/chemotherapy_informativeness.png",
+    params:
+        metadata_labels="meta_her2_status meta_chemotherapy",
+        output_dir=f"{OUTPUT_FOLDER}/gene_analysis",
+        n_top_genes=10
+    resources:
+        mem_mb=4000,
+        runtime=60
+    threads: 1
+    log:
+        "logs/analyze_predictive_genes.log"
+    shell:
+        """
+        python scripts/analyze_predictive_genes.py \
+            --train-genes {input.train_genes} \
+            --test-genes {input.test_genes} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --metadata-labels {params.metadata_labels} \
+            --output-dir {params.output_dir} \
+            --n-top-genes {params.n_top_genes} \
+            &> {log}
+        """
+
+
+rule oracle_shift_scale:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST
+    output:
+        comparison=f"{OUTPUT_FOLDER}/oracle_analysis/adjustment_comparison.png",
+        parameters=f"{OUTPUT_FOLDER}/oracle_analysis/oracle_parameters.png",
+        params_csv=f"{OUTPUT_FOLDER}/oracle_analysis/oracle_parameters.csv",
+        adjusted_data=f"{OUTPUT_FOLDER}/oracle_analysis/test_genes_oracle_adjusted.csv"
+    params:
+        target_genes="ERBB2 STARD3 PGAP3",
+        output_dir=f"{OUTPUT_FOLDER}/oracle_analysis"
+    resources:
+        mem_mb=4000,
+        runtime=180
+    threads: 1
+    log:
+        "logs/oracle_shift_scale.log"
+    shell:
+        """
+        python scripts/oracle_shift_scale.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --target-genes {params.target_genes} \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+rule debug_adjustment:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        bayesian_params="../bayesian_shift_scale_adjuster/outputs/precision_matrix.csv",
+        oracle_params=f"{OUTPUT_FOLDER}/oracle_analysis/oracle_parameters.csv"
+    output:
+        param_comparison=f"{OUTPUT_FOLDER}/debug_analysis/parameter_comparison.png",
+        gene_subset_results=f"{OUTPUT_FOLDER}/debug_analysis/gene_subset_comparison.csv",
+        param_csv=f"{OUTPUT_FOLDER}/debug_analysis/parameter_comparison.csv"
+    params:
+        output_dir=f"{OUTPUT_FOLDER}/debug_analysis"
+    resources:
+        mem_mb=4000,
+        runtime=120
+    threads: 1
+    log:
+        "logs/debug_adjustment.log"
+    shell:
+        """
+        python scripts/debug_adjustment.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --bayesian-params {input.bayesian_params} \
+            --oracle-params {input.oracle_params} \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+rule classifier_heatmaps:
+    input:
+        X_train=X_TRAIN,
+        X_test=X_TEST,
+        cv_results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv",
+        # Depend on all individual evaluation results to trigger parallelization
+        # Regular adjustment methods (with METHOD_ prefix)
+        method_result_files=expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/METHOD_{{adjuster}}__{{label}}.json",
+            classifier="{classifier}",
+            adjuster=list(config["adjusters"].keys()),
+            label=METADATA_LABELS
+        ),
+        # ORACLE multi-label DBA evaluation results (with ORACLE_ prefix)
+        oracle_shift_only_results=expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/ORACLE_multi_label_dba_shift_only__{{label}}.json",
+            classifier="{classifier}",
+            label=METADATA_LABELS
+        ),
+        oracle_shift_scale_results=expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/ORACLE_multi_label_dba_shift_scale__{{label}}.json",
+            classifier="{classifier}",
+            label=METADATA_LABELS
+        ),
+        # DBA training outputs (these will trigger the evaluation rules)
+        dba_trained_shift_only_files=expand(
+            f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{training_classifier}}.csv",
+            training_classifier=DBA_CLASSIFIERS
+        ),
+        dba_trained_shift_scale_files=expand(
+            f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{training_classifier}}.csv",
+            training_classifier=DBA_CLASSIFIERS
+        ),
+        # DBA evaluation results (depend on training outputs)
+        dba_eval_shift_only_results=expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/DBA_Shift_Only_Trained_{{training_classifier}}__{{label}}.json",
+            classifier="{classifier}",
+            training_classifier=DBA_CLASSIFIERS,
+            label=METADATA_LABELS
+        ),
+        dba_eval_shift_scale_results=expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/DBA_Shift_Scale_Trained_{{training_classifier}}__{{label}}.json",
+            classifier="{classifier}",
+            training_classifier=DBA_CLASSIFIERS,
+            label=METADATA_LABELS
+        ),
+    output:
+        heatmap=f"{OUTPUT_FOLDER}/classifier_heatmaps/heatmap_{{classifier}}.png",
+        csv=f"{OUTPUT_FOLDER}/classifier_heatmaps/results_{{classifier}}.csv",
+    params:
+        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.classifier],
+        results_dir=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}",
+        output_dir=f"{OUTPUT_FOLDER}/classifier_heatmaps"
+    resources:
+        mem_mb=4000,
+        runtime=20
+    threads: 1
+    log:
+        "logs/classifier_heatmaps_{classifier}.log"
+    shell:
+        """
+        python scripts/aggregate_and_plot_heatmap.py \
+            --results-dir {params.results_dir} \
+            --classifier '{params.classifier_name}' \
+            --cv-results {input.cv_results} \
+            --output-heatmap {output.heatmap} \
+            --output-csv {output.csv} \
+            &> {log}
+        """
+
+
+rule optimal_strategy_figure:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_effective="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        cv_results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv",
+    output:
+        figure=f"{OUTPUT_FOLDER}/optimal_strategy.png",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+    resources:
+        mem_mb=4000,
+        runtime=60
+    threads: 1
+    log:
+        "logs/optimal_strategy_figure.log"
+    shell:
+        """
+        python scripts/optimal_strategy_figure.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --output {output.figure} \
+            &> {log}
+        """
+
+
+# Individual evaluation jobs - one per (classifier, adjuster, label) combination
+# These are the regular adjustment methods (not oracle)
+rule evaluate_adjuster_label:
+    input:
+        train_genes=lambda wildcards: os.path.join(BASE, config["adjusters"][wildcards.adjuster]["train"]),
+        test_genes=lambda wildcards: os.path.join(BASE, config["adjusters"][wildcards.adjuster]["test"]),
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        result=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/METHOD_{{adjuster}}__{{label}}.json",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.classifier],
+    resources:
+        mem_mb=2000,
+        runtime=10
+    threads: 1
+    log:
+        "logs/evaluate_{classifier}_METHOD_{adjuster}_{label}.log"
+    shell:
+        """
+        python scripts/evaluate_single_adjuster_label.py \
+            --train-genes {input.train_genes} \
+            --test-genes {input.test_genes} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --adjuster-name {wildcards.adjuster} \
+            --label {wildcards.label} \
+            --classifier '{params.classifier_name}' \
+            --continuous-metadata {params.continuous_metadata} \
+            --output {output.result} \
+            &> {log}
+        """
+
+
+# Evaluation for multi-label DBA shift-only (Oracle method)
+rule evaluate_multi_label_dba_shift_only:
+    input:
+        train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
+        test_genes=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_direct.csv"),
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        result=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/ORACLE_multi_label_dba_shift_only__{{label}}.json",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.classifier],
+    resources:
+        mem_mb=2000,
+        runtime=10
+    threads: 1
+    log:
+        "logs/evaluate_{classifier}_ORACLE_multi_label_dba_shift_only_{label}.log"
+    shell:
+        """
+        python scripts/evaluate_single_adjuster_label.py \
+            --train-genes {input.train_genes} \
+            --test-genes {input.test_genes} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --adjuster-name "ORACLE: Multi-Label DBA (Shift-Only)" \
+            --label {wildcards.label} \
+            --classifier '{params.classifier_name}' \
+            --continuous-metadata {params.continuous_metadata} \
+            --output {output.result} \
+            &> {log}
+        """
+
+
+# Evaluation for multi-label DBA shift+scale (Oracle method)
+rule evaluate_multi_label_dba_shift_scale:
+    input:
+        train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
+        test_genes=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_direct.csv"),
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        result=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/ORACLE_multi_label_dba_shift_scale__{{label}}.json",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.classifier],
+    resources:
+        mem_mb=2000,
+        runtime=10
+    threads: 1
+    log:
+        "logs/evaluate_{classifier}_ORACLE_multi_label_dba_shift_scale_{label}.log"
+    shell:
+        """
+        python scripts/evaluate_single_adjuster_label.py \
+            --train-genes {input.train_genes} \
+            --test-genes {input.test_genes} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --adjuster-name "ORACLE: Multi-Label DBA (Shift+Scale)" \
+            --label {wildcards.label} \
+            --classifier '{params.classifier_name}' \
+            --continuous-metadata {params.continuous_metadata} \
+            --output {output.result} \
+            &> {log}
+        """
+
+
+# Evaluation for DBA trained with specific classifiers (shift-only)
+rule evaluate_dba_trained_shift_only:
+    input:
+        train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
+        test_genes=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{training_classifier}}.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        result=f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_Shift_Only_Trained_{{training_classifier}}__{{label}}.json",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.eval_classifier],
+        adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} (Shift-Only)",
+    resources:
+        mem_mb=2000,
+        runtime=10
+    threads: 1
+    log:
+        "logs/evaluate_{eval_classifier}_DBA_Shift_Only_Trained_{training_classifier}_{label}.log"
+    shell:
+        """
+        python scripts/evaluate_single_adjuster_label.py \
+            --train-genes {input.train_genes} \
+            --test-genes {input.test_genes} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --adjuster-name "{params.adjuster_name}" \
+            --label {wildcards.label} \
+            --classifier '{params.classifier_name}' \
+            --continuous-metadata {params.continuous_metadata} \
+            --output {output.result} \
+            &> {log}
+        """
+
+
+# Evaluation for DBA trained with specific classifiers (shift+scale)
+rule evaluate_dba_trained_shift_scale:
+    input:
+        train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
+        test_genes=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{training_classifier}}.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        result=f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_Shift_Scale_Trained_{{training_classifier}}__{{label}}.json",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.eval_classifier],
+        adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} (Shift+Scale)",
+    resources:
+        mem_mb=2000,
+        runtime=10
+    threads: 1
+    log:
+        "logs/evaluate_{eval_classifier}_DBA_Shift_Scale_Trained_{training_classifier}_{label}.log"
+    shell:
+        """
+        python scripts/evaluate_single_adjuster_label.py \
+            --train-genes {input.train_genes} \
+            --test-genes {input.test_genes} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --adjuster-name "{params.adjuster_name}" \
+            --label {wildcards.label} \
+            --classifier '{params.classifier_name}' \
+            --continuous-metadata {params.continuous_metadata} \
+            --output {output.result} \
+            &> {log}
+        """
+
+
+
+
+rule decision_boundary_alignment:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_effective="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        effective_shifts="adjusters/effective_shifts.csv",
+    output:
+        comparison=f"{OUTPUT_FOLDER}/dba_analysis/dba_comparison.png",
+        results=f"{OUTPUT_FOLDER}/dba_analysis/dba_results.csv",
+        parameters=f"{OUTPUT_FOLDER}/dba_analysis/dba_parameters.csv",
+        adjusted_direct=f"{OUTPUT_FOLDER}/dba_analysis/test_genes_dba_direct.csv",
+        adjusted_coef=f"{OUTPUT_FOLDER}/dba_analysis/test_genes_dba_coefficient.csv",
+        adjusted_hybrid=f"{OUTPUT_FOLDER}/dba_analysis/test_genes_dba_hybrid.csv"
+    params:
+        target_label="meta_her2_status",
+        n_top_genes=10,
+        classifier="elasticnet",
+        output_dir=f"{OUTPUT_FOLDER}/dba_analysis"
+    log:
+        "logs/decision_boundary_alignment.log"
+    shell:
+        """
+        python scripts/decision_boundary_alignment.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --test-genes-effective {input.test_genes_effective} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --target-label {params.target_label} \
+            --n-top-genes {params.n_top_genes} \
+            --classifier {params.classifier} \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+rule multi_label_dba:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_effective="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        effective_shifts="adjusters/effective_shifts.csv",
+    output:
+        comparison=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/multi_label_comparison.csv",
+        parameters=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/multi_label_dba_parameters.csv",
+        adjusted_cf=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_closed_form.csv",
+        adjusted_direct=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_direct.csv"
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        output_dir=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale"
+    resources:
+        mem_mb=8000,
+        runtime=180
+    threads: 1
+    log:
+        "logs/multi_label_dba.log"
+    shell:
+        """
+        python scripts/multi_label_dba.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --test-genes-effective {input.test_genes_effective} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+rule multi_label_dba_shift_only:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_effective="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        effective_shifts="adjusters/effective_shifts.csv",
+    output:
+        comparison=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/multi_label_comparison.csv",
+        parameters=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/multi_label_dba_parameters.csv",
+        adjusted_cf=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_closed_form.csv",
+        adjusted_direct=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_direct.csv"
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        output_dir=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only"
+    resources:
+        mem_mb=8000,
+        runtime=180
+    threads: 1
+    log:
+        "logs/multi_label_dba_shift_only.log"
+    shell:
+        """
+        python scripts/multi_label_dba.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --test-genes-effective {input.test_genes_effective} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --shift-only \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+# DBA Classifier Comparison Analysis
+# Train DBA with different classifiers and evaluate across all classifiers
+# Parallelized: each classifier trains in its own job
+
+# Individual training rules for each classifier (shift-only)
+rule dba_train_classifier_shift_only:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        adjusted=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{classifier}}.csv",
+        parameters=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/dba_parameters_{{classifier}}.csv",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only"
+    resources:
+        mem_mb=8000,
+        runtime=120
+    threads: 1
+    log:
+        "logs/dba_train_{classifier}_shift_only.log"
+    shell:
+        """
+        python scripts/multi_label_dba.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --training-classifier {wildcards.classifier} \
+            --shift-only \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+# Individual training rules for each classifier (shift+scale)
+rule dba_train_classifier_shift_scale:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        adjusted=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{classifier}}.csv",
+        parameters=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/dba_parameters_{{classifier}}.csv",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale"
+    resources:
+        mem_mb=8000,
+        runtime=180
+    threads: 1
+    log:
+        "logs/dba_train_{classifier}_shift_scale.log"
+    shell:
+        """
+        python scripts/multi_label_dba.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --training-classifier {wildcards.classifier} \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+# Aggregate and evaluate all trained models (shift-only)
+rule dba_classifier_comparison_shift_only:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        adjusted_files=expand(f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{classifier}}.csv",
+                             classifier=DBA_CLASSIFIERS),
+    output:
+        comparison=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/classifier_comparison.csv",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        training_classifiers=" ".join(DBA_CLASSIFIERS),
+        evaluation_classifiers=" ".join(DBA_CLASSIFIERS),
+        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only"
+    resources:
+        mem_mb=8000,
+        runtime=60
+    threads: 1
+    log:
+        "logs/dba_classifier_comparison_shift_only.log"
+    shell:
+        """
+        python scripts/dba_classifier_comparison.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --training-classifiers {params.training_classifiers} \
+            --evaluation-classifiers {params.evaluation_classifiers} \
+            --shift-only \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+# Aggregate and evaluate all trained models (shift+scale)
+rule dba_classifier_comparison_shift_scale:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+        adjusted_files=expand(f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{classifier}}.csv",
+                             classifier=DBA_CLASSIFIERS),
+    output:
+        comparison=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/classifier_comparison.csv",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        training_classifiers=" ".join(DBA_CLASSIFIERS),
+        evaluation_classifiers=" ".join(DBA_CLASSIFIERS),
+        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale"
+    resources:
+        mem_mb=8000,
+        runtime=60
+    threads: 1
+    log:
+        "logs/dba_classifier_comparison_shift_scale.log"
+    shell:
+        """
+        python scripts/dba_classifier_comparison.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --training-classifiers {params.training_classifiers} \
+            --evaluation-classifiers {params.evaluation_classifiers} \
+            --output-dir {params.output_dir} \
+            &> {log}
         """
