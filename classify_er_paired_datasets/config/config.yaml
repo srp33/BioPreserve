@@ -1,0 +1,47 @@
+data_directory: "/grphome/grp_batch_effects/data"
+output_directory: "/outputs/metrics"
+scripts_dir: "../confounded_old_scripts/evaluations/classify_er_mixed_datasets"
+
+# Adjusters to evaluate
+adjusters:
+  - unadjusted
+  - combat
+  - quantile
+  - min_mean
+  - mnn
+  - npn
+  - combat_target
+  # - simple
+  # - ranked1
+  # - ranked2
+  # - ranked_batch
+  # - gmm
+  # - gmm_global_simple
+  # - gmm_global_npn
+  # - gmm_affine
+
+# Classification parameters
+classifier: "HistGradientBoosting"
+prediction_column: "meta_er_status"
+source_column: "meta_source"
+n_repeats: 10
+n_splits: 3
+num_workers: 4
+
+# Datasets to include (will auto-discover from paired_datasets and gold directories)
+# Leave empty to process all available datasets
+include_datasets: []
+  # - gse20194
+  # - gse24080
+  # - gse49711
+
+
+# Detailed analysis settings (for hist_gradient_er_classification.py)
+detailed_datasets:
+  - gse20194_gse96058_hiseq
+  # Add more paired datasets for detailed analysis
+  # - gse20194_gse24080
+  # - gse49711_gse24080
+
+detailed_n_repeats: 2
+cache_dir: "/data/.cache/"

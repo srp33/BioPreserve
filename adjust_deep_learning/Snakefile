@@ -1,0 +1,78 @@
+from pathlib import Path
+
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
+
+# Load configuration
+DATA_DIR = config.get('data_dir', '/data/gold')
+MODELS = config.get('models', ['icvae', 'vfae', 'autoclass', 'wasserstein'])
+DATASETS = config.get('datasets', ['gse49711', 'gse24080', 'gse20194'])
+TRAINING_CONFIG = config.get('training_config', 'thorough')
+
+# Models that require preprocessing
+MODELS_NEEDING_COMBAT = ['wasserstein']
+
+rule all:
+    input:
+        expand(
+            "output/{dataset}/{model}.csv",
+            dataset=DATASETS,
+            model=MODELS
+        )
+
+rule run_deep_learning_model:
+    input:
+        # Input depends on whether model needs preprocessing
+        data=lambda wildcards: (
+            DATA_DIR + f"/{wildcards.dataset}/combat.csv" 
+            if wildcards.model in MODELS_NEEDING_COMBAT 
+            else DATA_DIR + f"/{wildcards.dataset}/unadjusted.csv"
+        ),
+        script="run_model.py"
+    output:
+        "output/{dataset}/{model}.csv"
+    params:
+        training=TRAINING_CONFIG
+    resources:
+        mem_mb=16000,
+        runtime=240,
+        gpu=1
+    threads: 1
+    log:
+        "logs/{dataset}_{model}.log"
+    shell:
+        """
+        # Run with Hydra config composition
+        python {input.script} \
+            model={wildcards.model} \
+            dataset={wildcards.dataset} \
+            training={params.training} \
+            &> {log}
+        """
+
+# Rule to run hyperparameter sweeps
+rule hyperparameter_sweep:
+    input:
+        script="run_model.py"
+    output:
+        directory("multirun/{model}_{dataset}_sweep")
+    params:
+        model="{model}",
+        dataset="{dataset}",
+        sweep_params=config.get('sweep_params', 'model.latent_dim=5,10,20,50')
+    resources:
+        mem_mb=32000,
+        runtime=480
+    threads: 4
+    log:
+        "logs/sweep_{model}_{dataset}.log"
+    shell:
+        """
+        python {input.script} --multirun \
+            model={params.model} \
+            dataset={params.dataset} \
+            {params.sweep_params} \
+            hydra.sweep.dir={output} \
+            &> {log}
+        """

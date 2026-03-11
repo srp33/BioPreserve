@@ -1,0 +1,4 @@
+# Default training configuration
+epochs: 100
+learning_rate: 0.001
+batch_size: 64

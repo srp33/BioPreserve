@@ -1,0 +1,92 @@
+from pathlib import Path
+import os
+import shlex
+
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
+
+OUTPUT_FOLDER = config["output_folder"]
+X_TRAIN = os.path.join(BASE, config["X_train"])
+X_TEST = os.path.join(BASE, config["X_test"])
+
+
+rule all:
+    input:
+        f"{OUTPUT_FOLDER}/heatmap.png",
+        f"{OUTPUT_FOLDER}/test_set_cv_results.csv",
+
+
+rule test_set_cv:
+    input:
+        test_genes="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_metadata=X_TEST
+    output:
+        results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv"
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        n_splits=config.get("cv_n_splits", 5)
+    log:
+        "logs/test_set_cv.log"
+    shell:
+        """
+        python scripts/test_set_cv.py \
+            --genes {input.test_genes} \
+            --metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --n-splits {params.n_splits} \
+            --output {output.results} \
+            &> {log}
+        """
+
+
+rule cross_dataset_classify:
+    input:
+        X_train=X_TRAIN,
+        X_test=X_TEST,
+        adjuster_files=[
+            os.path.join(BASE, path)
+            for adj in config["adjusters"].values()
+            for path in [adj["train"], adj["test"]]
+        ],
+    output:
+        results=f"{OUTPUT_FOLDER}/classification_results.csv",
+    params:
+        adjusters=" ".join(
+            shlex.quote(f"{k}={os.path.join(BASE, v['train'])}:{os.path.join(BASE, v['test'])}")
+            for k, v in config["adjusters"].items()
+        ),
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+    log:
+        "logs/cross_dataset_classify.log"
+    shell:
+        """
+        python scripts/cross_dataset_classify.py \
+            --X-train "{input.X_train}" \
+            --X-test "{input.X_test}" \
+            --adjusters {params.adjusters} \
+            --continuous-metadata {params.continuous_metadata} \
+            --output "{output.results}" \
+            &> "{log}"
+        """
+
+
+rule plot_heatmap:
+    input:
+        results=f"{OUTPUT_FOLDER}/classification_results.csv",
+        cv_results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv"
+    output:
+        heatmap=f"{OUTPUT_FOLDER}/heatmap.png",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+    log:
+        "logs/plot_heatmap.log"
+    shell:
+        """
+        python scripts/plot_heatmap.py \
+            --results "{input.results}" \
+            --cv-results "{input.cv_results}" \
+            --output "{output.heatmap}" \
+            --continuous-metadata {params.continuous_metadata} \
+            &> "{log}"
+        """

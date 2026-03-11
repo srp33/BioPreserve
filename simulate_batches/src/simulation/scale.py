@@ -22,6 +22,18 @@ class MultiplicativeScaleDescription(BatchEffectDescription):
             "scale_vector": self.scaling,
         }
     
+    def extract_shift_scale(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Extract shift and scale for inverse transformation.
+        
+        Forward: Y = X * scale_amount
+        Inverse: X = Y / scale_amount = Y * (1/scale_amount) + 0
+        """
+        n_features = len(self.scaling)
+        shift = np.zeros(n_features)
+        scale = 1.0 / self.scaling
+        return shift, scale
+    
 class MultiplicativeScaleEffect(BaseBatchEffect):
     """
     Simulates multiplicative batch-specific scaling

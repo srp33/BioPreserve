@@ -1,0 +1,4 @@
+# Thorough training configuration (more epochs)
+epochs: 400
+learning_rate: 0.001
+batch_size: 64

@@ -1,0 +1,4 @@
+# VFAE model configuration
+name: vfae
+latent_dim: 10
+hidden_dim: 128
