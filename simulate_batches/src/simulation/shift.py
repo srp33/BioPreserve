@@ -3,81 +3,73 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd 
 
-from .base import BaseBatchEffect, BatchEffectResult, BatchEffectDescription
+from .base import BaseBatchEffect, BatchEffectResult
 from .split import BatchSplit
-
-class AdditiveShiftDescription(BatchEffectDescription):
-    """
-    Stores true additive batch shifts
-    """
-
-    def __init__(self, shift: np.ndarray):
-        self.shift = shift
-
-    def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        return X_batch - self.shift
     
-    def parameters(self) -> dict:
-        return {
-            "type": "additive_shift",
-            "shift_vector": self.shift,
-        }
-    
-    def extract_shift_scale(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Extract shift and scale for inverse transformation.
-        
-        Forward: Y = X + shift_amount
-        Inverse: X = Y - shift_amount = Y * 1.0 + (-shift_amount)
-        """
-        n_features = len(self.shift)
-        shift = -self.shift
-        scale = np.ones(n_features)
-        return shift, scale
-    
-# Think about how to add a global shift
 class AdditiveShiftEffect(BaseBatchEffect):
     """
     Simulates additive batch-specific mean shifts.
     """
 
-    def __init__(self, scale: float = 1.0, random_state=None):
+    def __init__(
+            self, 
+            scale: float = 1.0, 
+            global_shift: bool = False,
+            sparse_prob: float | None=None, 
+            heteroskedastic: bool = False, 
+            random_state=None
+    ):
         super().__init__(random_state)
         self.scale = scale
+        self.global_shift = global_shift
+        self.sparse_prob = sparse_prob
+        self.heteroskedastic = heteroskedastic
         
-    def apply(self, X: pd.DataFrame, split: BatchSplit,) -> BatchEffectResult:
+    def apply(self, X: pd.DataFrame, split: BatchSplit) -> BatchEffectResult:
 
         batch_labels = split.batch_labels
         unique_batches = batch_labels.unique()
-
         X_batch = X.copy()
-        descriptions = {}
+        
+        shift = {}
+        scale = {}
 
         n_features = X.shape[1]
 
-        for batch_id in unique_batches:
+        if self.heteroskedastic:
+            feature_scale = X.mean().values
+        else:
+            feature_scale = np.ones(n_features)
 
+        for batch_id in unique_batches:
             mask = batch_labels == batch_id
             X_sub = X.loc[mask]
 
-            shift = self.rng.normal(0, self.scale, size=n_features)
+            # --- base shift ---
+            if self.global_shift:
+                shift_val = self.rng.normal(0, self.scale)
+                shift_effect = np.full(n_features, shift_val)
+            else:
+                shift_effect = self.rng.normal(0, self.scale, size=n_features)
 
-            X_shifted = X_sub * shift
+            # --- heteroskedastic scaling ---
+            shift_effect = shift_effect * feature_scale
 
+            # --- sparse mask ---
+            if self.sparse_prob is not None:
+                mask_sparse = self.rng.binomial(1, self.sparse_prob, size=n_features)
+                shift_effect = shift_effect * mask_sparse
+
+            X_shifted = X_sub + shift_effect
             X_batch.loc[mask] = X_shifted
 
-            descriptions[batch_id] = AdditiveShiftDescription(shift=shift)
+            shift[batch_id] = shift_effect
+            scale[batch_id] = np.ones(n_features)
 
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
-            metadata=split.metadata,
-            description=descriptions,
+            batch_labels=split.batch_labels,
+            batch_shift=shift,
+            batch_scale=scale,
         )
-
-
-"""
-Could also choose Sparse shift (only 20% of genes affected), block shift (shift only specific gene modules), heteroskedastsic shift (shift magnitude proportional to gene mean)
-mask = rng.choice([0, 1], size=n_features, p=[0.8, 0.2])
-shift = rng.normal(0, scale, size=n_features) * mask
-"""

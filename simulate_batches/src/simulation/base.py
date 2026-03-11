@@ -5,50 +5,29 @@ import pandas as pd
 import numpy as np
 from .split import BatchSplit
 
-
-@dataclass
 class BatchEffectResult:
-    X_original: pd.DataFrame
-    X_batch: pd.DataFrame
-    metadata: pd.DataFrame
-    description: "BatchEffectDescription"
+    def __init__(self, X_original: pd.DataFrame, X_batch: pd.DataFrame, batch_labels: pd.Series, batch_shift: dict[str, np.ndarray], batch_scale: dict[str, np.ndarray]):
+        self.X_original = X_original
+        self.X_batch = X_batch
+        self.batch_labels = batch_labels
+        self.batch_shift = batch_shift
+        self.batch_scale = batch_scale
 
-class BatchEffectDescription(ABC):
-    """
-    Describes the true batch transformation applied.
-    Must be able to invert or expose true parameters.
-    """
-
-    @abstractmethod
-    def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        ...
-    
-    @abstractmethod
-    def parameters(self) -> dict:
-        ...
-    
-    @abstractmethod
-    def extract_shift_scale(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    def invert(self) -> pd.DataFrame:
         """
-        Extract shift and scale parameters for the inverse transformation.
-        
-        Returns parameters in the form: X = Y * scale + shift
-        where Y is the batch-affected data and X is the recovered original.
-        
-        Parameters
-        ----------
-        X_batch : pd.DataFrame
-            The batch-affected data (may be needed for approximations).
-        
-        Returns
-        -------
-        shift : np.ndarray
-            Shift vector (one value per feature).
-        scale : np.ndarray
-            Scale vector (one value per feature).
+        Apply the ground-truth inverse transformation. 
         """
-        ...
+        X = self.X_batch.copy()
+        batch_labels = self.batch_labels
 
+        for batch_id in self.batch_shift:
+            mask = batch_labels == batch_id
+            shift = self.batch_shift[batch_id]
+            scale = self.batch_scale[batch_id]
+
+            X.loc[mask] = (X.loc[mask] - shift) / scale
+
+        return X
 
 class BaseBatchEffect(ABC):
     """
@@ -66,4 +45,3 @@ class BaseBatchEffect(ABC):
         split: BatchSplit,
     ) -> BatchEffectResult:
         ...
-        
