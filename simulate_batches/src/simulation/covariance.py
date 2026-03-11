@@ -24,7 +24,6 @@ class CovarianceDescription(BatchEffectDescription):
         """
 
         # True inverse would be X = (Y - C)(D + M)-1
-
         X = self.X_original.values
         Y = X_batch.values
 
@@ -132,8 +131,10 @@ class CovarianceEffect(BaseBatchEffect):
         return BatchEffectResult(
             X_original=X,
             X_batch=X_batch,
-            metadata=split.metadata,
-            description=descriptions,
+            batch_labels=batch_labels,
+            # FILL IN HERE
+            #batch_shift=shift,
+            #batch_scale=scale,
         )
     
     def extract_shift_scale(self) -> dict[int, tuple[np.ndarray, np.ndarray]]:

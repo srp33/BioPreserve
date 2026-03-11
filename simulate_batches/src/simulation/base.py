@@ -29,29 +29,6 @@ class BatchEffectResult:
 
         return X
 
-
-class BatchEffectDescription(ABC):
-    """
-    Describes the true batch transformation applied.
-    Must be able to invert or expose true parameters.
-    """
-
-    @abstractmethod
-    def invert(self, X_batch: pd.DataFrame) -> pd.DataFrame:
-        ...
-    
-    @abstractmethod
-    def parameters(self) -> dict:
-        ...
-
-    @abstractmethod
-    def extract_effect(self, X_batch: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Returns vectors for inverting the applied effect.
-        """
-        ...
-
-
 class BaseBatchEffect(ABC):
     """
     Abstract batch effect generator.
