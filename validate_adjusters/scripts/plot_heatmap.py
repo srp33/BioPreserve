@@ -5,7 +5,7 @@ import polars as pl
 import seaborn as sns
 
 
-def plot_heatmap(results_path, output_path, continuous_metadata):
+def plot_heatmap(results_path, output_path, continuous_metadata, cv_results_path=None):
     results_df = pl.read_csv(results_path)
 
     pivot = results_df.pivot(values="score_mean", index="adjuster", on="metadata_label")
@@ -30,10 +30,29 @@ def plot_heatmap(results_path, output_path, continuous_metadata):
     heatmap_df = pivot.to_pandas().set_index("adjuster")
     heatmap_df.columns = [label_map.get(c, c) for c in heatmap_df.columns]
     heatmap_df.index = [adjuster_map.get(i, i) for i in heatmap_df.index]
+    
+    # Add CV results as a row if provided
+    if cv_results_path:
+        cv_df = pl.read_csv(cv_results_path)
+        cv_row = {}
+        for row in cv_df.iter_rows(named=True):
+            col_name = label_map.get(row['metadata_column'], row['metadata_column'])
+            cv_row[col_name] = row['score']
+        
+        # Add CV row to heatmap at the top
+        import pandas as pd
+        cv_series = pd.Series(cv_row, name="CV Ceiling (test set)")
+        heatmap_df = pd.concat([cv_series.to_frame().T, heatmap_df])
 
     er_col = "ER status"
     if er_col in heatmap_df.columns:
-        heatmap_df = heatmap_df.sort_values(er_col, ascending=False)
+        # Sort all rows except the first one (CV ceiling)
+        if cv_results_path:
+            cv_row_data = heatmap_df.iloc[:1]
+            sorted_df = heatmap_df.iloc[1:].sort_values(er_col, ascending=False)
+            heatmap_df = pd.concat([cv_row_data, sorted_df])
+        else:
+            heatmap_df = heatmap_df.sort_values(er_col, ascending=False)
 
     fig, ax = plt.subplots(figsize=(max(10, len(heatmap_df.columns) * 1.1), max(3, len(heatmap_df) * 1.2 + 1.5)))
 
@@ -50,7 +69,7 @@ def plot_heatmap(results_path, output_path, continuous_metadata):
     )
 
     ax.set_title(
-        "Cross-Dataset Classification Performance\n(MCC, except Age which uses R\u00b2)",
+        "Cross-Dataset Classification Performance\n(MCC, except Age which uses R\u00b2)\nCV Ceiling = k-fold CV on test set only",
         pad=15,
     )
     ax.set_xlabel("Metadata Label")
@@ -67,12 +86,13 @@ def plot_heatmap(results_path, output_path, continuous_metadata):
 def main():
     parser = argparse.ArgumentParser(description="Plot cross-dataset classification performance heatmap.")
     parser.add_argument("--results", required=True, help="Path to classification results CSV.")
+    parser.add_argument("--cv-results", help="Path to CV results CSV (optional).")
     parser.add_argument("--output", required=True, help="Output path for heatmap PNG.")
     parser.add_argument("--continuous-metadata", nargs="*", default=[],
                         help="Metadata columns treated as continuous (for reference only).")
     args = parser.parse_args()
 
-    message = plot_heatmap(args.results, args.output, args.continuous_metadata)
+    message = plot_heatmap(args.results, args.output, args.continuous_metadata, args.cv_results)
     print(message, flush=True)
 
 

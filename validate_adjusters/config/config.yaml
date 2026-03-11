@@ -6,6 +6,9 @@ output_folder: "outputs"
 X_train: "metadata/metadata_train.csv"
 X_test: "metadata/metadata_test.csv"
 
+# Cross-validation settings
+cv_n_splits: 5  # Number of folds for test set CV
+
 # Adjusters: name -> {train: gene_expr_train_path, test: gene_expr_test_path}
 # Each adjuster supplies its own train and test gene expression CSVs so the
 # downstream classifier is trained and evaluated on consistently adjusted data.
@@ -39,3 +42,6 @@ adjusters:
 # All other metadata columns are treated as classification targets (MCC)
 continuous_metadata:
   - "meta_age_at_diagnosis"
+
+# Cross-validation settings for test set ceiling analysis
+cv_n_splits: 5

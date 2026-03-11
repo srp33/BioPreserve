@@ -1,0 +1,10 @@
+metadata_column,metric,score,n_samples
+meta_er_status,MCC,0.7847888673810012,1980
+meta_menopause_status,MCC,0.3325528242238485,1980
+meta_age_at_diagnosis,R²,0.29661779546676537,1980
+meta_chemotherapy,MCC,0.3661085343751531,1980
+meta_histological_type,MCC,0.15143544645015475,1980
+meta_her2_status,MCC,0.8182805497953473,1980
+meta_age_at_diagnosis_combined_lt50,MCC,0.3325528242238485,1980
+meta_age_at_diagnosis_combined_50_69,MCC,0.06576932698585759,1980
+meta_age_at_diagnosis_combined_ge70,MCC,0.2619209803841058,1980
