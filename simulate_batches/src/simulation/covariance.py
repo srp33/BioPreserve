@@ -5,7 +5,7 @@ from scipy.sparse import coo_matrix, diags
 from scipy.linalg import sqrtm, inv
 from dataclasses import dataclass
 
-from .base import BaseBatchEffect, BatchEffectResult, BatchEffectDescription
+from .base import BaseBatchEffect, BatchEffectResult
 from .split import BatchSplit
 
 @dataclass

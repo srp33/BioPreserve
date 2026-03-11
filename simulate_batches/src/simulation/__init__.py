@@ -6,7 +6,7 @@ from .base import (
     BatchSplit,
 )
 
-from .split import RandomBatchSplit, ConfoundedSplit
+from .split import RandomSplit, StratifiedSplit, ConfoundedSplit
 from .shift import AdditiveShiftEffect
 from .scale import MultiplicativeScaleEffect
 
