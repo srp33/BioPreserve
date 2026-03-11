@@ -1,4 +1,4 @@
-data_directory: "/data/paired_datasets"
+data_directory: "/grphome/grp_batch_effects/data/paired_datasets"
 adjust_script: "../adjust/adjust.R"
 
 # Define adjusters to run in parallel

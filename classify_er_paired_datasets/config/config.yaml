@@ -1,9 +1,6 @@
-data_directory: "/data"
+data_directory: "/grphome/grp_batch_effects/data"
 output_directory: "/outputs/metrics"
 scripts_dir: "../confounded_old_scripts/evaluations/classify_er_mixed_datasets"
-
-# Path to adjust_paired_datasets config (for the included workflow)
-adjust_paired_config: "../adjust_paired_datasets/config.yaml"
 
 # Adjusters to evaluate
 adjusters:

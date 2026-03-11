@@ -3,7 +3,9 @@ import os
 import json
 import pandas as pd
 
-configfile: "config.yaml"
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
 
 # Load configuration
 DATA_DIR = config.get('data_dir', '../data/gold')

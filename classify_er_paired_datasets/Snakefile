@@ -1,42 +1,36 @@
 from pathlib import Path
 from glob import glob
+import yaml
 
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
 # Load this workflow's config first
-configfile: "config.yaml"
+configfile: str(BASE / "config" / "config.yaml")
 
-# Store classify config before including other workflow
-CLASSIFY_DATA_DIR = config['data_directory']
-CLASSIFY_OUTPUT_DIR = config['output_directory']
-CLASSIFY_SCRIPTS_DIR = config['scripts_dir']
-CLASSIFY_ADJUSTERS = config['adjusters']
-CLASSIFY_CLASSIFIER = config['classifier']
-CLASSIFY_PREDICTION_COL = config['prediction_column']
-CLASSIFY_SOURCE_COL = config['source_column']
-CLASSIFY_N_REPEATS = config['n_repeats']
-CLASSIFY_N_SPLITS = config['n_splits']
-CLASSIFY_NUM_WORKERS = config['num_workers']
-CLASSIFY_INCLUDE_DATASETS = config.get('include_datasets', [])
+# Load config for the included adjust_paired_datasets module
+adjust_config_path = BASE.parent / 'adjust_paired_datasets' / 'config' / 'config.yaml'
+with open(adjust_config_path) as f:
+    adjust_config = yaml.safe_load(f)
 
 # Include the adjust_paired_datasets workflow
-# This will load its config and make its rules available with adjust_paired_ prefix
 module adjust_paired:
     snakefile: "../adjust_paired_datasets/Snakefile"
-    config: config.get('adjust_paired_config', '../adjust_paired_datasets/config.yaml')
+    config: adjust_config
 
 use rule * from adjust_paired as adjust_paired_*
 
-# Use classify config variables
-DATA_DIR = CLASSIFY_DATA_DIR
-OUTPUT_DIR = CLASSIFY_OUTPUT_DIR
-SCRIPTS_DIR = CLASSIFY_SCRIPTS_DIR
-ADJUSTERS = CLASSIFY_ADJUSTERS
-CLASSIFIER = CLASSIFY_CLASSIFIER
-PREDICTION_COL = CLASSIFY_PREDICTION_COL
-SOURCE_COL = CLASSIFY_SOURCE_COL
-N_REPEATS = CLASSIFY_N_REPEATS
-N_SPLITS = CLASSIFY_N_SPLITS
-NUM_WORKERS = CLASSIFY_NUM_WORKERS
-INCLUDE_DATASETS = CLASSIFY_INCLUDE_DATASETS
+# Load this workflow's config
+DATA_DIR = config['data_directory']
+OUTPUT_DIR = config['output_directory']
+SCRIPTS_DIR = config['scripts_dir']
+ADJUSTERS = config['adjusters']
+CLASSIFIER = config['classifier']
+PREDICTION_COL = config['prediction_column']
+SOURCE_COL = config['source_column']
+N_REPEATS = config['n_repeats']
+N_SPLITS = config['n_splits']
+NUM_WORKERS = config['num_workers']
+INCLUDE_DATASETS = config.get('include_datasets', [])
 
 # Auto-discover datasets
 PAIRED_DIR = f"{DATA_DIR}/paired_datasets"
@@ -79,6 +73,7 @@ rule classify_er:
         paired_files=lambda wildcards: [
             f"{PAIRED_DIR}/{dataset}/{wildcards.adjuster}.csv"
             for dataset in PAIRED_DATASETS
+            if Path(f"{PAIRED_DIR}/{dataset}/{wildcards.adjuster}.csv").exists()
         ],
         # Single dataset files
         single_files=lambda wildcards: [
@@ -107,31 +102,15 @@ rule classify_er:
         """
         export PYTHONPATH="/scripts:$PYTHONPATH"
         
-        # Filter to only existing files
-        paired_existing=""
-        for f in {input.paired_files}; do
-            if [ -f "$f" ]; then
-                paired_existing="$paired_existing $f"
-            fi
-        done
-        
-        single_existing=""
-        for f in {input.single_files}; do
-            if [ -f "$f" ]; then
-                single_existing="$single_existing $f"
-            fi
-        done
-        
-        # Check if we have any files to process
-        if [ -z "$paired_existing" ] && [ -z "$single_existing" ]; then
+        if [ -z "{input.paired_files}" ] && [ -z "{input.single_files}" ]; then
             echo "No input files found for adjuster {wildcards.adjuster}" > {log}
             touch {output}
             exit 0
         fi
         
         python {input.script} \
-            --combined-list $paired_existing \
-            --single-list $single_existing \
+            --combined-list {input.paired_files} \
+            --single-list {input.single_files} \
             --single-source-names {params.single_names} \
             --output {output} \
             --adjustment {wildcards.adjuster} \

@@ -1,0 +1,26 @@
+# Config for simulate_batches workflow
+# Includes prepdata config for the included module
+
+osf_datasets:
+  - GSE19615
+  - GSE20194
+  - GSE20271
+  - GSE23720
+  - GSE25055
+  - GSE25065
+  - GSE31448
+  - GSE45255
+  - GSE58644
+  - GSE62944_Tumor
+  - GSE76275
+  - GSE81538
+  - GSE96058_HiSeq
+  - GSE96058_NextSeq
+  - METABRIC
+
+gdrive_datasets:
+  - GSE115577
+  - GSE123845
+  - GSE163882
+
+data_directory: "/grphome/grp_batch_effects/data"

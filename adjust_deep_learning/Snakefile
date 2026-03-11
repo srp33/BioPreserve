@@ -1,6 +1,8 @@
 from pathlib import Path
 
-configfile: "config.yaml"
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
 
 # Load configuration
 DATA_DIR = config.get('data_dir', '/data/gold')
@@ -14,7 +16,7 @@ MODELS_NEEDING_COMBAT = ['wasserstein']
 rule all:
     input:
         expand(
-            DATA_DIR + "/{dataset}/{model}.csv",
+            "output/{dataset}/{model}.csv",
             dataset=DATASETS,
             model=MODELS
         )
@@ -29,7 +31,7 @@ rule run_deep_learning_model:
         ),
         script="run_model.py"
     output:
-        DATA_DIR + "/{dataset}/{model}.csv"
+        "output/{dataset}/{model}.csv"
     params:
         training=TRAINING_CONFIG
     resources:

@@ -1,9 +1,9 @@
 import os
 import shlex
 
-configfile: "config.yaml"
-
-BASE = workflow.basedir
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
 OUTPUT_FOLDER = config["output_folder"]
 X_TRAIN = os.path.join(BASE, config["X_train"])
 X_TEST = os.path.join(BASE, config["X_test"])

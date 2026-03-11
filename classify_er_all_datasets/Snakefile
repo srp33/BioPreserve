@@ -1,4 +1,8 @@
-configfile: "config.yaml"
+from pathlib import Path
+
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
 
 # Allow command-line overrides for paths
 OUTPUT_FOLDER = config["output_folder"]

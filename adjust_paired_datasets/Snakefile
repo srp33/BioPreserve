@@ -1,7 +1,9 @@
 from pathlib import Path
 from glob import glob
 
-configfile: "config.yaml"
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
 
 # Load configuration
 DATA_DIR = config['data_directory']

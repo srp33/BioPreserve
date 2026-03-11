@@ -28,10 +28,6 @@ matplotlib = "*"
 jaxtyping = "*"
 beartype = "*"
 
-# === Workflow ===
-snakemake = "==9.13.7"
-snakemake-executor-plugin-slurm = ">=1.9.2,<2"
-
 [tasks]
 # Test deep learning packages
 test-torch = "python -c 'import torch; print(f\"✓ PyTorch {torch.__version__}\"); print(f\"  CUDA available: {torch.cuda.is_available()}\")'"

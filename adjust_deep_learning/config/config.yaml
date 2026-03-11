@@ -1,6 +1,6 @@
 # Snakemake configuration for deep learning models
 
-data_dir: /data/gold
+data_dir: /grphome/grp_batch_effects/data/gold
 
 # Models to run
 models:
@@ -11,9 +11,9 @@ models:
 
 # Datasets to process
 datasets:
-  - gse49711
-  - gse24080
-  # - gse20194
+  - gse20194
+  - gse20271
+  - gse23720
 
 # Training configuration to use (default, fast, thorough)
 training_config: thorough
