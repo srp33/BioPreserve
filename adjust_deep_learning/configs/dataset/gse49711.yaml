@@ -1,0 +1,5 @@
+# GSE49711 dataset configuration
+name: gse49711
+batch_col: meta_Sex
+input_file: ${data_dir}/${dataset.name}/unadjusted.csv
+output_file: ${data_dir}/${dataset.name}/${output_suffix}.csv

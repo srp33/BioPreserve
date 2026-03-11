@@ -1,0 +1,4 @@
+# Fast training configuration (for testing)
+epochs: 50
+learning_rate: 0.001
+batch_size: 128

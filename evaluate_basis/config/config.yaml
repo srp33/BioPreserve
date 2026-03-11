@@ -1,0 +1,39 @@
+# Configuration for basis evaluation sweep
+
+# Data directory containing gold standard datasets
+data_dir: '../data/gold'
+
+# Datasets to evaluate (breast cancer datasets)
+datasets:
+  - GSE20194
+  - GSE24080
+  - GSE49711
+  - GSE25066
+  - GSE31519
+  - GSE20271
+  - GSE32646
+  - GSE42568
+  - GSE22220
+  - GSE2990
+  - GSE3494
+  - GSE1456
+  - GSE7390
+  - GSE11121
+
+# Hyperparameter grid for sweep
+alignment_methods:
+  - optimal_transport
+  - harmonic_gmm
+
+whiten_covariance:
+  - "True"
+  - "False"
+
+shrinkage_caps:
+  - 2.0
+  - 5.0
+
+# Static parameters
+transform_type: arcsinh
+pmd_gating: "False"
+pca_variance: 0.85

@@ -9,6 +9,7 @@ from .base import (
 from .split import RandomSplit, StratifiedSplit, ConfoundedSplit
 from .shift import AdditiveShiftEffect
 from .scale import MultiplicativeScaleEffect
+from .composite import CompositeEffect, CompositeEffectDescription
 
 __all__ = [
     "BaseBatchEffect",
@@ -18,4 +19,6 @@ __all__ = [
     "ConfoundedSplit",
     "AdditiveShiftEffect",
     "MultiplicativeScaleEffect",
+    "CompositeEffect",
+    "CompositeEffectDescription",
 ]

@@ -1,17 +1,26 @@
-include: "../prepdata/Snakefile"
+from pathlib import Path
 
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
 
-configfile: "config.yaml"
+# Include prepdata workflow as a module to avoid config conflicts
+module prepdata:
+    snakefile: "../prepdata/Snakefile"
+
+use rule * from prepdata as prepdata_*
 
 
 rule all:
     input: 
+        # Add target files here
 
 
 rule first:
     input:
     output:
+        "output/placeholder.txt"
     log:
+        "logs/first.log"
     shell:
-
-        
+        "touch {output}"

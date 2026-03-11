@@ -1,0 +1,5 @@
+# Wasserstein model configuration
+name: wasserstein
+# Requires combat-adjusted input
+requires_preprocessing: combat
+verbose: true

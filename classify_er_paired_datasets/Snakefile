@@ -1,0 +1,156 @@
+from pathlib import Path
+from glob import glob
+import yaml
+
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+# Load this workflow's config first
+configfile: str(BASE / "config" / "config.yaml")
+
+# Load config for the included adjust_paired_datasets module
+adjust_config_path = BASE.parent / 'adjust_paired_datasets' / 'config' / 'config.yaml'
+with open(adjust_config_path) as f:
+    adjust_config = yaml.safe_load(f)
+
+# Include the adjust_paired_datasets workflow
+module adjust_paired:
+    snakefile: "../adjust_paired_datasets/Snakefile"
+    config: adjust_config
+
+use rule * from adjust_paired as adjust_paired_*
+
+# Load this workflow's config
+DATA_DIR = config['data_directory']
+OUTPUT_DIR = config['output_directory']
+SCRIPTS_DIR = config['scripts_dir']
+ADJUSTERS = config['adjusters']
+CLASSIFIER = config['classifier']
+PREDICTION_COL = config['prediction_column']
+SOURCE_COL = config['source_column']
+N_REPEATS = config['n_repeats']
+N_SPLITS = config['n_splits']
+NUM_WORKERS = config['num_workers']
+INCLUDE_DATASETS = config.get('include_datasets', [])
+
+# Auto-discover datasets
+PAIRED_DIR = f"{DATA_DIR}/paired_datasets"
+GOLD_DIR = f"{DATA_DIR}/gold"
+
+# Find paired datasets (directories with gse*_gse* pattern)
+paired_dataset_dirs = glob(f"{PAIRED_DIR}/gse*_gse*")
+PAIRED_DATASETS = [Path(d).name for d in paired_dataset_dirs if Path(d).is_dir()]
+
+# Find single datasets (directories in gold with meta_er_status)
+gold_dataset_dirs = glob(f"{GOLD_DIR}/gse*")
+SINGLE_DATASETS = [Path(d).name for d in gold_dataset_dirs if Path(d).is_dir()]
+
+# Filter datasets if specified
+if INCLUDE_DATASETS:
+    PAIRED_DATASETS = [d for d in PAIRED_DATASETS if any(inc in d for inc in INCLUDE_DATASETS)]
+    SINGLE_DATASETS = [d for d in SINGLE_DATASETS if d in INCLUDE_DATASETS]
+
+print(f"Found {len(PAIRED_DATASETS)} paired datasets")
+print(f"Found {len(SINGLE_DATASETS)} single datasets")
+
+rule all:
+    input:
+        expand(
+            OUTPUT_DIR + "/er_classification_{adjuster}.csv",
+            adjuster=ADJUSTERS
+        )
+
+rule all_detailed:
+    input:
+        expand(
+            OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_summary.csv",
+            dataset=config.get('detailed_datasets', []),
+            adjuster=ADJUSTERS
+        )
+
+rule classify_er:
+    input:
+        # Paired dataset files - depend on adjust_paired workflow
+        paired_files=lambda wildcards: [
+            f"{PAIRED_DIR}/{dataset}/{wildcards.adjuster}.csv"
+            for dataset in PAIRED_DATASETS
+            if Path(f"{PAIRED_DIR}/{dataset}/{wildcards.adjuster}.csv").exists()
+        ],
+        # Single dataset files
+        single_files=lambda wildcards: [
+            f"{GOLD_DIR}/{dataset}/{wildcards.adjuster}.csv"
+            for dataset in SINGLE_DATASETS
+            if Path(f"{GOLD_DIR}/{dataset}/{wildcards.adjuster}.csv").exists()
+        ],
+        script=SCRIPTS_DIR + "/HGB_classify_er.py"
+    output:
+        OUTPUT_DIR + "/er_classification_{adjuster}.csv"
+    params:
+        single_names=SINGLE_DATASETS,
+        classifier=CLASSIFIER,
+        pred_col=PREDICTION_COL,
+        source_col=SOURCE_COL,
+        n_repeats=N_REPEATS,
+        n_splits=N_SPLITS,
+        num_workers=NUM_WORKERS
+    resources:
+        mem_mb=16000,
+        runtime=360
+    threads: NUM_WORKERS
+    log:
+        "logs/classify_{adjuster}.log"
+    shell:
+        """
+        export PYTHONPATH="/scripts:$PYTHONPATH"
+        
+        if [ -z "{input.paired_files}" ] && [ -z "{input.single_files}" ]; then
+            echo "No input files found for adjuster {wildcards.adjuster}" > {log}
+            touch {output}
+            exit 0
+        fi
+        
+        python {input.script} \
+            --combined-list {input.paired_files} \
+            --single-list {input.single_files} \
+            --single-source-names {params.single_names} \
+            --output {output} \
+            --adjustment {wildcards.adjuster} \
+            --classifier {params.classifier} \
+            --prediction-column {params.pred_col} \
+            --source-column {params.source_col} \
+            --n {params.n_repeats} \
+            --n-splits {params.n_splits} \
+            --num-workers {params.num_workers} \
+            &> {log}
+        """
+
+rule detailed_analysis:
+    input:
+        data=PAIRED_DIR + "/{dataset}/{adjuster}.csv",
+        script=SCRIPTS_DIR + "/hist_gradient_er_classification.py"
+    output:
+        summary=OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_summary.csv",
+        metrics=OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_all.csv",
+        confusion=OUTPUT_DIR + "/detailed/{dataset}_{adjuster}_confusion.txt"
+    params:
+        cache_dir=config.get('cache_dir', '/data/.cache/'),
+        n_repeats=config.get('detailed_n_repeats', 2)
+    resources:
+        mem_mb=8000,
+        runtime=120
+    threads: 1
+    log:
+        "logs/detailed_{dataset}_{adjuster}.log"
+    shell:
+        """
+        export PYTHONPATH="/scripts:$PYTHONPATH"
+        
+        python {input.script} \
+            --input-data {input.data} \
+            --summary {output.summary} \
+            --output {output.metrics} \
+            --confusion-matrix {output.confusion} \
+            --adjustment {wildcards.adjuster} \
+            --cache-dir {params.cache_dir} \
+            --n-repeats {params.n_repeats} \
+            &> {log}
+        """

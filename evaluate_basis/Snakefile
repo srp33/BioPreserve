@@ -1,0 +1,104 @@
+from pathlib import Path
+import os
+import json
+import pandas as pd
+
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
+
+# Load configuration
+DATA_DIR = config.get('data_dir', '../data/gold')
+DATASETS = config.get('datasets', [
+    "GSE20194", "GSE24080", "GSE49711", "GSE25066", 
+    "GSE31519", "GSE20271", "GSE32646", "GSE42568", 
+    "GSE22220", "GSE2990",  "GSE3494",  "GSE1456", 
+    "GSE7390",  "GSE11121"
+])
+
+# Generate all pairwise combinations (Reference vs Target) where Ref != Tgt
+PAIRS = [(ref, tgt) for ref in DATASETS for tgt in DATASETS if ref != tgt]
+
+# Hyperparameter Grid
+ALIGNMENT_METHODS = config.get('alignment_methods', ["optimal_transport", "harmonic_gmm"])
+WHITEN_COVARIANCE = config.get('whiten_covariance', ["True", "False"])
+SHRINKAGE_CAPS = config.get('shrinkage_caps', [2.0, 5.0])
+
+# Static Parameters
+TRANSFORM_TYPE = config.get('transform_type', 'arcsinh')
+PMD_GATING = config.get('pmd_gating', 'False')
+PCA_VARIANCE = config.get('pca_variance', 0.85)
+
+rule all:
+    input:
+        "results/basis_sweep_aggregated_metrics.csv"
+
+rule run_basis_eval:
+    input:
+        script="test_basis.py"
+    output:
+        json_out="results/runs/{ref}_vs_{tgt}_{align}_whiten{whiten}_shrink{shrink}.json"
+    params:
+        data_dir=DATA_DIR,
+        transform_type=TRANSFORM_TYPE,
+        pmd_gating=PMD_GATING,
+        pca_variance=PCA_VARIANCE
+    resources:
+        mem_mb=8000,
+        runtime=60
+    threads: 1
+    log:
+        "logs/{ref}_vs_{tgt}_{align}_whiten{whiten}_shrink{shrink}.log"
+    shell:
+        """
+        python {input.script} \
+            --ref {wildcards.ref} \
+            --tgt {wildcards.tgt} \
+            --data_dir {params.data_dir} \
+            --alignment_method {wildcards.align} \
+            --transform_type {params.transform_type} \
+            --whiten_covariance {wildcards.whiten} \
+            --enable_pmd_gating {params.pmd_gating} \
+            --shrinkage_cap {wildcards.shrink} \
+            --pca_variance_retained {params.pca_variance} \
+            --out {output.json_out} \
+            &> {log}
+        """
+
+rule aggregate_metrics:
+    input:
+        # Dynamically expand all combinations in the grid
+        expand(
+            "results/runs/{ref}_vs_{tgt}_{align}_whiten{whiten}_shrink{shrink}.json",
+            pair=PAIRS,
+            ref=[p[0] for p in PAIRS],
+            tgt=[p[1] for p in PAIRS],
+            align=ALIGNMENT_METHODS,
+            whiten=WHITEN_COVARIANCE,
+            shrink=SHRINKAGE_CAPS
+        )
+    output:
+        csv_out="results/basis_sweep_aggregated_metrics.csv"
+    resources:
+        mem_mb=4000,
+        runtime=10
+    log:
+        "logs/aggregate_metrics.log"
+    run:
+        records = []
+        for file in input:
+            if not os.path.exists(file):
+                continue
+            with open(file, 'r') as f:
+                try:
+                    data = json.load(f)
+                    records.append(data)
+                except json.JSONDecodeError:
+                    print(f"Warning: Failed to parse JSON in {file}")
+                    
+        if records:
+            df = pd.DataFrame(records)
+            df.to_csv(output.csv_out, index=False)
+            print(f"Successfully aggregated {len(df)} sweep iterations into {output.csv_out}")
+        else:
+            print("No valid JSON results found to aggregate.")

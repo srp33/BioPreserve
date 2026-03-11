@@ -1,0 +1,280 @@
+from pathlib import Path
+
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
+
+# Allow command-line overrides for paths
+OUTPUT_FOLDER = config["output_folder"]
+DATA_FOLDER = config["data_folder"]
+SCRIPTS_DIR = config.get("scripts_dir", ".")
+ADJUST_SCRIPT = config.get("adjust_script", "../../adjust/adjust.R")
+BOOTSTRAP_TOTAL = config["bootstrap_total"]
+BOOTSTRAP_PER_JOB = config["bootstrap_per_job"]
+N_HVG = config["n_hvg"]
+CHUNKS = range(BOOTSTRAP_TOTAL // BOOTSTRAP_PER_JOB)
+K_FOLDS = config["k_folds"]
+K_VALUES = config["k_values"]
+
+rule all: 
+    input: 
+        OUTPUT_FOLDER + "/classify_all_figures/absolute_scaling_MCC.png", 
+        OUTPUT_FOLDER + "/classify_all_figures/absolute_scaling_ROC_AUC.png",
+        # OUTPUT_FOLDER + "/classify_all_figures/scaling_MCC.png",
+        # OUTPUT_FOLDER + "/classify_all_figures/scaling_ROC_AUC.png"
+
+rule plot_performance:
+    priority: 60
+    input:
+        aggregated_metrics_file=DATA_FOLDER + "/classify_metrics/all_metrics.csv",
+        metadata_file=DATA_FOLDER + "/geo_metadata.csv",
+        cv_file=DATA_FOLDER + "/cv_metrics.csv"
+    output: 
+        OUTPUT_FOLDER + "/classify_all_figures/absolute_scaling_MCC.png", 
+        OUTPUT_FOLDER + "/classify_all_figures/absolute_scaling_ROC_AUC.png",
+        # OUTPUT_FOLDER + "/classify_all_figures/scaling_MCC.png",
+        # OUTPUT_FOLDER + "/classify_all_figures/scaling_ROC_AUC.png"
+    resources: 
+        mem_mb=4000,
+        runtime=20
+    threads: 1
+    log: 
+        "log/plot_performance.log"
+    params:
+        fig_dir = OUTPUT_FOLDER + "/classify_all_figures",
+        order_dir = DATA_FOLDER + "/all_combined/gse_order_files"
+    shell:
+        """
+        set -euo pipefail
+        Rscript {SCRIPTS_DIR}/plot_performance.R \
+            --metrics_file {input.aggregated_metrics_file} \
+            --figures_dir {params.fig_dir} \
+            --metadata_file {input.metadata_file} \
+            --cv_file {input.cv_file} \
+            --order_folder {params.order_dir} \
+            &> {log}
+        """
+
+rule aggregate_metrics:
+    priority: 70
+    input: 
+        metrics_data=expand(
+            DATA_FOLDER + "/classify_metrics/{adjuster}/{adjuster}_{k}studies_test_{test_source}_chunk{chunk}_metrics.csv",
+            adjuster=config["adjuster"],
+            k=K_VALUES,
+            test_source=config["dataset_ids"],
+            chunk = CHUNKS
+        )
+    output:
+        output_path=DATA_FOLDER + "/classify_metrics/all_metrics.csv"
+    resources: 
+        mem_mb=4000,
+        runtime=20
+    threads: 1
+    log: 
+        "log/aggregate.log"
+    params:
+        metrics_dir=DATA_FOLDER + "/classify_metrics"
+    shell:
+        """
+        set -euo pipefail
+        python {SCRIPTS_DIR}/aggregate_metrics.py --metrics-dir {params.metrics_dir} --output {output.output_path} &> {log}
+        """
+
+rule classify:
+    priority: 80
+    input:
+        adjusted_csv = DATA_FOLDER + "/adjusted_data/{adjuster}/{adjuster}_{k}studies_test_{test_source}.csv"
+    output: 
+        metrics_file = DATA_FOLDER + "/classify_metrics/{adjuster}/{adjuster}_{k}studies_test_{test_source}_chunk{chunk}_metrics.csv"
+    log: 
+        "log/classify/{adjuster}_{k}_{test_source}_chunk{chunk}.log"
+    resources: 
+        mem_mb=16000,
+        runtime=360
+    threads: 1
+    params:
+        output_dir = DATA_FOLDER + "/classify_metrics",
+        bootstrap = BOOTSTRAP_PER_JOB
+    shell:
+        r"""
+        set -euo pipefail
+        python {SCRIPTS_DIR}/run_classifier.py \
+            --csv {input.adjusted_csv} \
+            --outdir {params.output_dir} \
+            --chunk {wildcards.chunk} \
+            --chunk-size {params.bootstrap} \
+            &> {log}
+        """
+
+rule adjust: 
+    priority: 90
+    input: 
+        DATA_FOLDER + "/subset_data/{k}studies_test_{test_source}.csv"
+    output: 
+        DATA_FOLDER + "/adjusted_data/{adjuster}/{adjuster}_{k}studies_test_{test_source}.csv"
+    resources: 
+        mem_mb=24000,
+        runtime=90
+    threads: 1
+    log: 
+        "log/adjust/{adjuster}_{k}_{test_source}_adjust.log"
+    params:
+        output_dir = DATA_FOLDER + "/adjusted_data",
+        adjust_script = ADJUST_SCRIPT,
+        metadata = DATA_FOLDER + "/geo_metadata.csv" 
+    shell:
+        """
+        set -euo pipefail
+        Rscript {SCRIPTS_DIR}/run_scaling_experiment.R \
+            --adjuster {wildcards.adjuster} \
+            --subset-path {input} \
+            --k {wildcards.k} \
+            --test {wildcards.test_source} \
+            --output-dir {params.output_dir} \
+            --adjust-script {params.adjust_script} \
+            --metadata-file {params.metadata} \
+            &> {log}
+        """
+
+rule subset:
+    priority: 100
+    input:
+        combined_file = DATA_FOLDER + "/all_combined/all_combined.csv",
+        order_file = DATA_FOLDER + "/all_combined/gse_order_files/{test_source}_order.csv"
+    output:
+        DATA_FOLDER + "/subset_data/{k}studies_test_{test_source}.csv"
+    resources: 
+        mem_mb=16000,
+        runtime=30
+    threads: 1
+    log: 
+        "log/subset/{k}_{test_source}_subset.log"
+    shell:
+        """
+        set -euo pipefail
+        Rscript {SCRIPTS_DIR}/subset_prep.R \
+        --input {input.combined_file} \
+        --test {wildcards.test_source} \
+        --order {input.order_file} \
+        --k {wildcards.k} \
+        --output {output} \
+        &> {log}
+        """
+
+rule cross_validate:
+    input: 
+        combined_file = DATA_FOLDER + "/all_combined/all_combined.csv"
+    output:
+        cv_file = DATA_FOLDER + "/cv_metrics.csv"
+    resources:
+        mem_mb=16000,
+        runtime=360
+    threads: 1
+    log:
+        "log/cross_validation/cv.log"
+    params:
+        k_folds=K_FOLDS
+    shell:
+        """
+        set -euo pipefail
+        python {SCRIPTS_DIR}/run_cv_per_test.py \
+            --combined_csv {input.combined_file} \
+            --outdir {DATA_FOLDER} \
+            --k_folds {params.k_folds} \
+            &> {log}
+        """
+
+rule make_order_files:
+    input: 
+        combined_file = DATA_FOLDER + "/all_combined/all_combined.csv"
+    output: 
+        order_file = DATA_FOLDER + "/all_combined/gse_order_files/{test_source}_order.csv"
+    resources: 
+        mem_mb=8000,
+        runtime=10
+    threads: 1
+    log: 
+        "log/order/{test_source}_order.log"
+    params:
+        output_dir = DATA_FOLDER + "/all_combined/gse_order_files"
+    shell:
+        """
+        set -euo pipefail
+        python {SCRIPTS_DIR}/make_order_files.py \
+            --input {input.combined_file} \
+            --output {output.order_file} \
+            &> {log}
+        """
+
+rule combine:
+    input: 
+        gold_dir = DATA_FOLDER + "/gold"
+    output:
+        DATA_FOLDER + "/all_combined/all_combined.csv"
+    resources: 
+        mem_mb=16000,
+        runtime=60
+    threads: 1
+    log: 
+        "log/combine.log"
+    shell:
+        """
+        python {SCRIPTS_DIR}/combine_all.py --input-dir {input.gold_dir} --output-file {output} &> {log}
+        """
+
+
+rule all_feature_importance:
+    input:
+        expand(
+            DATA_FOLDER + "/feature_importance/{adjuster}/{adjuster}_{k}studies_test_{test_source}_importance.csv",
+            adjuster=config["adjuster"],
+            k=K_VALUES,
+            test_source=config["dataset_ids"]
+        )
+
+rule feature_importance:
+    input:
+        csv=DATA_FOLDER + "/adjusted_data/{adjuster}/{adjuster}_{k}studies_test_{test_source}.csv",
+        script=SCRIPTS_DIR + "/classify_feature_importance.py"
+    output:
+        DATA_FOLDER + "/feature_importance/{adjuster}/{adjuster}_{k}studies_test_{test_source}_importance.csv"
+    params:
+        metric=config.get("feature_importance_metric", "roc_auc"),
+        outdir=DATA_FOLDER + "/feature_importance/{adjuster}"
+    resources:
+        mem_mb=16000,
+        runtime=600
+    threads: 4
+    log:
+        "log/features/{adjuster}_{k}_{test_source}_features.log"
+    shell:
+        """
+        set -euo pipefail
+        mkdir -p {params.outdir}
+        python {input.script} \
+            --csv {input.csv} \
+            --outdir {params.outdir} \
+            --metric {params.metric} \
+            --n_jobs {threads} \
+            &> {log}
+        """
+
+
+rule summarize_gold:
+    input:
+        gold_dir=DATA_FOLDER + "/gold",
+        script=SCRIPTS_DIR + "/summarize_gold_data.py"
+    output:
+        DATA_FOLDER + "/gold/csv_value_summaries.csv"
+    resources:
+        mem_mb=8000,
+        runtime=30
+    threads: 1
+    log:
+        "log/summarize_gold.log"
+    shell:
+        """
+        set -euo pipefail
+        python {input.script} &> {log}
+        """

@@ -1,0 +1,9 @@
+# ICVAE model configuration
+name: icvae
+latent_dim: 10
+hidden_dim: 128
+hidden_dim_aux: 64
+
+# Loss weights
+w_kl: 1.0
+w_mi_penalty: 1.0

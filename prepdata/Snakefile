@@ -1,6 +1,8 @@
 from pathlib import Path
 
-configfile: "config/config.yaml"
+# Get the directory where this Snakefile is located
+BASE = Path(workflow.basedir)
+configfile: str(BASE / "config" / "config.yaml")
 
 DATA_DIR = config['data_directory']
 RAW_DOWNLOAD_DIR = DATA_DIR + "/raw_download"

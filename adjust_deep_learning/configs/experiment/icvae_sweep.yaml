@@ -1,0 +1,15 @@
+# @package _global_
+
+# Example experiment config for hyperparameter sweep
+defaults:
+  - override /model: icvae
+  - override /dataset: gse49711
+  - override /training: thorough
+
+# Hydra sweeper configuration
+hydra:
+  sweeper:
+    params:
+      model.latent_dim: choice(5, 10, 20, 50)
+      model.hidden_dim: choice(64, 128, 256)
+      training.learning_rate: tag(log, interval(1e-4, 1e-2))
