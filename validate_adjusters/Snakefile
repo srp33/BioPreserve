@@ -37,10 +37,8 @@ CLASSIFIER_NAMES = {
 DBA_CLASSIFIERS = ['histgradient', 'elasticnet', 'logistic', 'randomforest']
 
 # Rule order: specific multi-label DBA rules should be preferred over generic evaluate_adjuster_label
-ruleorder: evaluate_multi_label_dba_shift_only > evaluate_adjuster_label
-ruleorder: evaluate_multi_label_dba_shift_scale > evaluate_adjuster_label
-ruleorder: evaluate_dba_trained_shift_only > evaluate_adjuster_label
-ruleorder: evaluate_dba_trained_shift_scale > evaluate_adjuster_label
+ruleorder: evaluate_multi_label_dba > evaluate_adjuster_label
+ruleorder: evaluate_dba_trained > evaluate_adjuster_label
 
 rule all:
     input:
@@ -366,28 +364,9 @@ rule classifier_heatmaps:
             classifier="{classifier}",
             label=METADATA_LABELS
         ),
-        # DBA training outputs (these will trigger the evaluation rules)
-        dba_trained_shift_only_files=expand(
-            f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{training_classifier}}.csv",
-            training_classifier=DBA_CLASSIFIERS
-        ),
-        dba_trained_shift_scale_files=expand(
-            f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{training_classifier}}.csv",
-            training_classifier=DBA_CLASSIFIERS
-        ),
-        # DBA evaluation results (depend on training outputs)
-        dba_eval_shift_only_results=expand(
-            f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/DBA_Shift_Only_Trained_{{training_classifier}}__{{label}}.json",
-            classifier="{classifier}",
-            training_classifier=DBA_CLASSIFIERS,
-            label=METADATA_LABELS
-        ),
-        dba_eval_shift_scale_results=expand(
-            f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/DBA_Shift_Scale_Trained_{{training_classifier}}__{{label}}.json",
-            classifier="{classifier}",
-            training_classifier=DBA_CLASSIFIERS,
-            label=METADATA_LABELS
-        ),
+        # DBA comparison outputs (these will trigger training and evaluation)
+        dba_comparison_shift_only=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/classifier_comparison.csv",
+        dba_comparison_shift_scale=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/classifier_comparison.csv",
     output:
         heatmap=f"{OUTPUT_FOLDER}/classifier_heatmaps/heatmap_{{classifier}}.png",
         csv=f"{OUTPUT_FOLDER}/classifier_heatmaps/results_{{classifier}}.csv",
@@ -480,93 +459,27 @@ rule evaluate_adjuster_label:
         """
 
 
-# Evaluation for multi-label DBA shift-only (Oracle method)
-rule evaluate_multi_label_dba_shift_only:
+# Evaluation for multi-label DBA (Oracle method, unified for both shift types)
+rule evaluate_multi_label_dba:
     input:
         train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
-        test_genes=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_direct.csv"),
+        test_genes=lambda wildcards: os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_{wildcards.shift_type}/test_genes_multi_label_dba_direct.csv"),
         train_metadata=X_TRAIN,
         test_metadata=X_TEST,
     output:
-        result=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/ORACLE_multi_label_dba_shift_only__{{label}}.json",
+        result=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/ORACLE_multi_label_dba_{{shift_type}}__{{label}}.json",
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
         classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.classifier],
+        adjuster_name=lambda wildcards: f"ORACLE: Multi-Label DBA ({wildcards.shift_type.replace('_', '-').title()})",
     resources:
         mem_mb=2000,
         runtime=10
     threads: 1
     log:
-        "logs/evaluate_{classifier}_ORACLE_multi_label_dba_shift_only_{label}.log"
-    shell:
-        """
-        python scripts/evaluate_single_adjuster_label.py \
-            --train-genes {input.train_genes} \
-            --test-genes {input.test_genes} \
-            --train-metadata {input.train_metadata} \
-            --test-metadata {input.test_metadata} \
-            --adjuster-name "ORACLE: Multi-Label DBA (Shift-Only)" \
-            --label {wildcards.label} \
-            --classifier '{params.classifier_name}' \
-            --continuous-metadata {params.continuous_metadata} \
-            --output {output.result} \
-            &> {log}
-        """
-
-
-# Evaluation for multi-label DBA shift+scale (Oracle method)
-rule evaluate_multi_label_dba_shift_scale:
-    input:
-        train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
-        test_genes=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_direct.csv"),
-        train_metadata=X_TRAIN,
-        test_metadata=X_TEST,
-    output:
-        result=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}/ORACLE_multi_label_dba_shift_scale__{{label}}.json",
-    params:
-        continuous_metadata=" ".join(config["continuous_metadata"]),
-        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.classifier],
-    resources:
-        mem_mb=2000,
-        runtime=10
-    threads: 1
-    log:
-        "logs/evaluate_{classifier}_ORACLE_multi_label_dba_shift_scale_{label}.log"
-    shell:
-        """
-        python scripts/evaluate_single_adjuster_label.py \
-            --train-genes {input.train_genes} \
-            --test-genes {input.test_genes} \
-            --train-metadata {input.train_metadata} \
-            --test-metadata {input.test_metadata} \
-            --adjuster-name "ORACLE: Multi-Label DBA (Shift+Scale)" \
-            --label {wildcards.label} \
-            --classifier '{params.classifier_name}' \
-            --continuous-metadata {params.continuous_metadata} \
-            --output {output.result} \
-            &> {log}
-        """
-
-
-# Evaluation for DBA trained with specific classifiers (shift-only)
-rule evaluate_dba_trained_shift_only:
-    input:
-        train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
-        test_genes=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{training_classifier}}.csv",
-        train_metadata=X_TRAIN,
-        test_metadata=X_TEST,
-    output:
-        result=f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_Shift_Only_Trained_{{training_classifier}}__{{label}}.json",
-    params:
-        continuous_metadata=" ".join(config["continuous_metadata"]),
-        classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.eval_classifier],
-        adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} (Shift-Only)",
-    resources:
-        mem_mb=2000,
-        runtime=10
-    threads: 1
-    log:
-        "logs/evaluate_{eval_classifier}_DBA_Shift_Only_Trained_{training_classifier}_{label}.log"
+        "logs/evaluate_{classifier}_ORACLE_multi_label_dba_{shift_type}_{label}.log"
+    wildcard_constraints:
+        shift_type="shift_only|shift_scale"
     shell:
         """
         python scripts/evaluate_single_adjuster_label.py \
@@ -583,25 +496,28 @@ rule evaluate_dba_trained_shift_only:
         """
 
 
-# Evaluation for DBA trained with specific classifiers (shift+scale)
-rule evaluate_dba_trained_shift_scale:
+# Evaluation for DBA trained with specific classifiers (unified for both shift types)
+rule evaluate_dba_trained:
     input:
         train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
-        test_genes=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{training_classifier}}.csv",
+        test_genes=f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}/test_genes_dba_{{training_classifier}}.csv",
         train_metadata=X_TRAIN,
         test_metadata=X_TEST,
     output:
-        result=f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_Shift_Scale_Trained_{{training_classifier}}__{{label}}.json",
+        result=f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_{{shift_label}}_Trained_{{training_classifier}}__{{label}}.json",
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
         classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.eval_classifier],
-        adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} (Shift+Scale)",
+        adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} ({wildcards.shift_label.replace('_', '+')})",
+        shift_type=lambda wildcards: "shift_only" if wildcards.shift_label == "Shift_Only" else "shift_scale"
     resources:
         mem_mb=2000,
         runtime=10
     threads: 1
     log:
-        "logs/evaluate_{eval_classifier}_DBA_Shift_Scale_Trained_{training_classifier}_{label}.log"
+        "logs/evaluate_{eval_classifier}_DBA_{shift_label}_Trained_{training_classifier}_{label}.log"
+    wildcard_constraints:
+        shift_label="Shift_Only|Shift_Scale"
     shell:
         """
         python scripts/evaluate_single_adjuster_label.py \
@@ -741,8 +657,8 @@ rule multi_label_dba_shift_only:
 # Train DBA with different classifiers and evaluate across all classifiers
 # Parallelized: each classifier trains in its own job
 
-# Individual training rules for each classifier (shift-only)
-rule dba_train_classifier_shift_only:
+# Individual training rules for each classifier (unified for both shift types)
+rule dba_train_classifier:
     input:
         train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
         test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
@@ -750,17 +666,18 @@ rule dba_train_classifier_shift_only:
         train_metadata=X_TRAIN,
         test_metadata=X_TEST,
     output:
-        adjusted=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{classifier}}.csv",
-        parameters=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/dba_parameters_{{classifier}}.csv",
+        adjusted=f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}/test_genes_dba_{{classifier}}.csv",
+        parameters=f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}/dba_parameters_{{classifier}}.csv",
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
-        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only"
+        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}",
+        shift_only_flag=lambda wildcards: "--shift-only" if wildcards.shift_type == "shift_only" else ""
     resources:
         mem_mb=8000,
-        runtime=120
+        runtime=lambda wildcards: 120 if wildcards.shift_type == "shift_only" else 180
     threads: 1
     log:
-        "logs/dba_train_{classifier}_shift_only.log"
+        "logs/dba_train_{classifier}_{shift_type}.log"
     shell:
         """
         python scripts/multi_label_dba.py \
@@ -771,69 +688,52 @@ rule dba_train_classifier_shift_only:
             --test-metadata {input.test_metadata} \
             --continuous-metadata {params.continuous_metadata} \
             --training-classifier {wildcards.classifier} \
-            --shift-only \
+            {params.shift_only_flag} \
             --output-dir {params.output_dir} \
             &> {log}
         """
 
 
-# Individual training rules for each classifier (shift+scale)
-rule dba_train_classifier_shift_scale:
-    input:
-        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
-        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
-        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
-        train_metadata=X_TRAIN,
-        test_metadata=X_TEST,
-    output:
-        adjusted=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{classifier}}.csv",
-        parameters=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/dba_parameters_{{classifier}}.csv",
-    params:
-        continuous_metadata=" ".join(config["continuous_metadata"]),
-        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale"
-    resources:
-        mem_mb=8000,
-        runtime=180
-    threads: 1
-    log:
-        "logs/dba_train_{classifier}_shift_scale.log"
-    shell:
-        """
-        python scripts/multi_label_dba.py \
-            --train-genes {input.train_genes} \
-            --test-genes-unadjusted {input.test_genes_unadjusted} \
-            --test-genes-bayesian {input.test_genes_bayesian} \
-            --train-metadata {input.train_metadata} \
-            --test-metadata {input.test_metadata} \
-            --continuous-metadata {params.continuous_metadata} \
-            --training-classifier {wildcards.classifier} \
-            --output-dir {params.output_dir} \
-            &> {log}
-        """
-
-
-# Aggregate and evaluate all trained models (shift-only)
-rule dba_classifier_comparison_shift_only:
+# Aggregate and evaluate all trained models (unified for both shift types)
+rule dba_classifier_comparison:
     input:
         train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
         test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
         train_metadata=X_TRAIN,
         test_metadata=X_TEST,
-        adjusted_files=expand(f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/test_genes_dba_{{classifier}}.csv",
-                             classifier=DBA_CLASSIFIERS),
+        # Depend on individual training outputs
+        adjusted_files=lambda wildcards: expand(
+            f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}/test_genes_dba_{{classifier}}.csv",
+            shift_type=wildcards.shift_type,
+            classifier=DBA_CLASSIFIERS
+        ),
+        param_files=lambda wildcards: expand(
+            f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}/dba_parameters_{{classifier}}.csv",
+            shift_type=wildcards.shift_type,
+            classifier=DBA_CLASSIFIERS
+        ),
+        # Depend on all evaluation results
+        evaluation_results=lambda wildcards: expand(
+            f"{OUTPUT_FOLDER}/classifier_results/{{eval_classifier}}/DBA_{{shift_label}}_Trained_{{training_classifier}}__{{label}}.json",
+            eval_classifier=CLASSIFIERS,
+            shift_label="Shift_Only" if wildcards.shift_type == "shift_only" else "Shift_Scale",
+            training_classifier=DBA_CLASSIFIERS,
+            label=METADATA_LABELS
+        ),
     output:
-        comparison=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only/classifier_comparison.csv",
+        comparison=f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}/classifier_comparison.csv",
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
         training_classifiers=" ".join(DBA_CLASSIFIERS),
         evaluation_classifiers=" ".join(DBA_CLASSIFIERS),
-        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_only"
+        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}",
+        shift_only_flag=lambda wildcards: "--shift-only" if wildcards.shift_type == "shift_only" else ""
     resources:
-        mem_mb=8000,
-        runtime=60
+        mem_mb=2000,
+        runtime=10
     threads: 1
     log:
-        "logs/dba_classifier_comparison_shift_only.log"
+        "logs/dba_classifier_comparison_{shift_type}.log"
     shell:
         """
         python scripts/dba_classifier_comparison.py \
@@ -844,44 +744,8 @@ rule dba_classifier_comparison_shift_only:
             --continuous-metadata {params.continuous_metadata} \
             --training-classifiers {params.training_classifiers} \
             --evaluation-classifiers {params.evaluation_classifiers} \
-            --shift-only \
-            --output-dir {params.output_dir} \
-            &> {log}
-        """
-
-
-# Aggregate and evaluate all trained models (shift+scale)
-rule dba_classifier_comparison_shift_scale:
-    input:
-        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
-        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
-        train_metadata=X_TRAIN,
-        test_metadata=X_TEST,
-        adjusted_files=expand(f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/test_genes_dba_{{classifier}}.csv",
-                             classifier=DBA_CLASSIFIERS),
-    output:
-        comparison=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale/classifier_comparison.csv",
-    params:
-        continuous_metadata=" ".join(config["continuous_metadata"]),
-        training_classifiers=" ".join(DBA_CLASSIFIERS),
-        evaluation_classifiers=" ".join(DBA_CLASSIFIERS),
-        output_dir=f"{OUTPUT_FOLDER}/dba_classifier_comparison_shift_scale"
-    resources:
-        mem_mb=8000,
-        runtime=60
-    threads: 1
-    log:
-        "logs/dba_classifier_comparison_shift_scale.log"
-    shell:
-        """
-        python scripts/dba_classifier_comparison.py \
-            --train-genes {input.train_genes} \
-            --test-genes-unadjusted {input.test_genes_unadjusted} \
-            --train-metadata {input.train_metadata} \
-            --test-metadata {input.test_metadata} \
-            --continuous-metadata {params.continuous_metadata} \
-            --training-classifiers {params.training_classifiers} \
-            --evaluation-classifiers {params.evaluation_classifiers} \
+            {params.shift_only_flag} \
+            --aggregate-only \
             --output-dir {params.output_dir} \
             &> {log}
         """

@@ -538,7 +538,8 @@ def main():
     print("="*60)
     shifts_dba, scales_dba, result_dba = find_multi_label_alignment(
         X_train, X_test_unadjusted, labels_train, labels_test,
-        label_types, optimize_scale=not args.shift_only, method='direct'
+        label_types, optimize_scale=not args.shift_only, method='direct',
+        classifier=args.training_classifier
     )
     
     X_test_dba = (X_test_unadjusted - shifts_dba) / scales_dba
