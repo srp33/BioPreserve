@@ -500,7 +500,7 @@ rule evaluate_multi_label_dba:
 rule evaluate_dba_trained:
     input:
         train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
-        test_genes=f"{OUTPUT_FOLDER}/dba_classifier_comparison_{{shift_type}}/test_genes_dba_{{training_classifier}}.csv",
+        test_genes=lambda wildcards: f"{OUTPUT_FOLDER}/dba_classifier_comparison_{'shift_only' if wildcards.shift_label == 'Shift_Only' else 'shift_scale'}/test_genes_dba_{wildcards.training_classifier}.csv",
         train_metadata=X_TRAIN,
         test_metadata=X_TEST,
     output:
@@ -509,7 +509,6 @@ rule evaluate_dba_trained:
         continuous_metadata=" ".join(config["continuous_metadata"]),
         classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.eval_classifier],
         adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} ({wildcards.shift_label.replace('_', '+')})",
-        shift_type=lambda wildcards: "shift_only" if wildcards.shift_label == "Shift_Only" else "shift_scale"
     resources:
         mem_mb=2000,
         runtime=10
@@ -576,7 +575,8 @@ rule decision_boundary_alignment:
         """
 
 
-rule multi_label_dba:
+# Multi-label DBA analysis (unified for both shift types)
+rule multi_label_dba_analysis:
     input:
         train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
         test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
@@ -586,19 +586,22 @@ rule multi_label_dba:
         test_metadata=X_TEST,
         effective_shifts="adjusters/effective_shifts.csv",
     output:
-        comparison=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/multi_label_comparison.csv",
-        parameters=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/multi_label_dba_parameters.csv",
-        adjusted_cf=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_closed_form.csv",
-        adjusted_direct=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_direct.csv"
+        comparison=f"{OUTPUT_FOLDER}/multi_label_dba_{{shift_type}}/multi_label_comparison.csv",
+        parameters=f"{OUTPUT_FOLDER}/multi_label_dba_{{shift_type}}/multi_label_dba_parameters.csv",
+        adjusted_cf=f"{OUTPUT_FOLDER}/multi_label_dba_{{shift_type}}/test_genes_multi_label_dba_closed_form.csv",
+        adjusted_direct=f"{OUTPUT_FOLDER}/multi_label_dba_{{shift_type}}/test_genes_multi_label_dba_direct.csv"
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
-        output_dir=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale"
+        output_dir=f"{OUTPUT_FOLDER}/multi_label_dba_{{shift_type}}",
+        shift_only_flag=lambda wildcards: "--shift-only" if wildcards.shift_type == "shift_only" else ""
     resources:
         mem_mb=8000,
         runtime=180
     threads: 1
     log:
-        "logs/multi_label_dba.log"
+        "logs/multi_label_dba_{shift_type}.log"
+    wildcard_constraints:
+        shift_type="shift_only|shift_scale"
     shell:
         """
         python scripts/multi_label_dba.py \
@@ -609,45 +612,7 @@ rule multi_label_dba:
             --train-metadata {input.train_metadata} \
             --test-metadata {input.test_metadata} \
             --continuous-metadata {params.continuous_metadata} \
-            --output-dir {params.output_dir} \
-            &> {log}
-        """
-
-
-rule multi_label_dba_shift_only:
-    input:
-        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
-        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
-        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
-        test_genes_effective="adjusters/adjusted_bayesian_effective_shift_only_2studies_test_metabric_test_selected_genes.csv",
-        train_metadata=X_TRAIN,
-        test_metadata=X_TEST,
-        effective_shifts="adjusters/effective_shifts.csv",
-    output:
-        comparison=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/multi_label_comparison.csv",
-        parameters=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/multi_label_dba_parameters.csv",
-        adjusted_cf=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_closed_form.csv",
-        adjusted_direct=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_direct.csv"
-    params:
-        continuous_metadata=" ".join(config["continuous_metadata"]),
-        output_dir=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only"
-    resources:
-        mem_mb=8000,
-        runtime=180
-    threads: 1
-    log:
-        "logs/multi_label_dba_shift_only.log"
-    shell:
-        """
-        python scripts/multi_label_dba.py \
-            --train-genes {input.train_genes} \
-            --test-genes-unadjusted {input.test_genes_unadjusted} \
-            --test-genes-bayesian {input.test_genes_bayesian} \
-            --test-genes-effective {input.test_genes_effective} \
-            --train-metadata {input.train_metadata} \
-            --test-metadata {input.test_metadata} \
-            --continuous-metadata {params.continuous_metadata} \
-            --shift-only \
+            {params.shift_only_flag} \
             --output-dir {params.output_dir} \
             &> {log}
         """
