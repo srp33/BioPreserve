@@ -20,6 +20,181 @@ from scipy.optimize import minimize
 from pathlib import Path
 
 
+def train_classifiers_for_labels(X_train, labels_train, label_types, classifier='histgradient'):
+    """
+    Pre-train classifiers for all labels to avoid retraining during optimization.
+    
+    Returns:
+        dict: {label_name: {'clf': trained_classifier, 'scaler': scaler or None, 
+                           'mask_train': mask, 'X_train_filtered': filtered_X_train}}
+    """
+    trained_models = {}
+    
+    print(f"  Pre-training {len(labels_train)} classifiers (one per label)...")
+    
+    for label_name, y_train in labels_train.items():
+        label_type = label_types[label_name]
+        mask_train = ~np.isnan(y_train)
+        
+        X_train_filtered = X_train[mask_train]
+        y_train_filtered = y_train[mask_train]
+        
+        # Skip if not enough classes
+        if len(np.unique(y_train_filtered)) < 2:
+            trained_models[label_name] = None
+            continue
+        
+        scaler = None
+        
+        if label_type == 'classification':
+            # Select and train classifier
+            if classifier == 'histgradient':
+                clf = HistGradientBoostingClassifier(random_state=42, max_iter=50, max_depth=5)
+            elif classifier == 'elasticnet':
+                scaler = StandardScaler()
+                X_train_filtered = scaler.fit_transform(X_train_filtered)
+                clf = SGDClassifier(
+                    loss='log_loss', penalty='elasticnet',
+                    alpha=0.0001, l1_ratio=0.15,
+                    max_iter=1000, random_state=42, tol=1e-3
+                )
+            elif classifier == 'logistic':
+                scaler = StandardScaler()
+                X_train_filtered = scaler.fit_transform(X_train_filtered)
+                clf = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
+            elif classifier == 'randomforest':
+                from sklearn.ensemble import RandomForestClassifier
+                clf = RandomForestClassifier(n_estimators=50, random_state=42, max_depth=10, n_jobs=-1)
+            else:
+                raise ValueError(f"Unknown classifier: {classifier}")
+        else:  # regression
+            if classifier == 'histgradient':
+                clf = HistGradientBoostingRegressor(random_state=42, max_iter=50, max_depth=5)
+            else:
+                # Use Ridge for all other methods
+                scaler = StandardScaler()
+                X_train_filtered = scaler.fit_transform(X_train_filtered)
+                clf = Ridge(alpha=1.0, random_state=42)
+        
+        clf.fit(X_train_filtered, y_train_filtered)
+        print(f"    ✓ Trained {classifier} for {label_name}")
+        
+        trained_models[label_name] = {
+            'clf': clf,
+            'scaler': scaler,
+            'mask_train': mask_train,
+            'label_type': label_type
+        }
+    
+    return trained_models
+
+
+def soft_mcc(y_true, y_proba):
+    """
+    Compute a differentiable approximation of Matthews Correlation Coefficient.
+    
+    Uses predicted probabilities instead of hard predictions to create a smooth,
+    differentiable objective function for optimization.
+    
+    Args:
+        y_true: True binary labels (0 or 1)
+        y_proba: Predicted probabilities for class 1 (continuous [0, 1])
+    
+    Returns:
+        float: Soft MCC in range [-1, 1]
+    """
+    # Convert to numpy arrays
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
+    
+    # Get probabilities for both classes
+    p1 = y_proba  # P(class=1)
+    p0 = 1 - y_proba  # P(class=0)
+    
+    # Soft confusion matrix elements
+    # TP: true label is 1, predicted probability of 1
+    # TN: true label is 0, predicted probability of 0
+    # FP: true label is 0, predicted probability of 1
+    # FN: true label is 1, predicted probability of 0
+    
+    tp = np.sum(y_true * p1)  # sum of P(pred=1) when true=1
+    tn = np.sum((1 - y_true) * p0)  # sum of P(pred=0) when true=0
+    fp = np.sum((1 - y_true) * p1)  # sum of P(pred=1) when true=0
+    fn = np.sum(y_true * p0)  # sum of P(pred=0) when true=1
+    
+    # Compute soft MCC
+    numerator = tp * tn - fp * fn
+    denominator = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    
+    # Avoid division by zero
+    if denominator < 1e-8:
+        return 0.0
+    
+    return numerator / denominator
+
+
+def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True):
+    """
+    Evaluate using a pre-trained classifier.
+    
+    Args:
+        X_test: Test features (already adjusted)
+        y_test: Test labels
+        trained_model: Dict with 'clf', 'scaler', 'label_type'
+        use_proba: If True, use predict_proba for smooth gradients (classification only)
+    
+    Returns:
+        float: Soft MCC for classification (if use_proba), hard MCC otherwise, R2 for regression
+    """
+    if trained_model is None:
+        return np.nan
+    
+    clf = trained_model['clf']
+    scaler = trained_model['scaler']
+    label_type = trained_model['label_type']
+    
+    mask_test = ~np.isnan(y_test)
+    X_test_filtered = X_test[mask_test]
+    y_test_filtered = y_test[mask_test]
+    
+    if label_type == 'classification':
+        if len(np.unique(y_test_filtered)) < 2:
+            return np.nan
+    
+    # Apply scaling if needed
+    if scaler is not None:
+        X_test_filtered = scaler.transform(X_test_filtered)
+    
+    # For classification, use probabilities for smooth gradients during optimization
+    if label_type == 'classification' and use_proba:
+        try:
+            # Get probability predictions (smooth, differentiable)
+            y_proba = clf.predict_proba(X_test_filtered)
+            
+            # Get probability of class 1
+            if y_proba.shape[1] == 2:
+                y_proba_class1 = y_proba[:, 1]
+            else:
+                # Binary case with single column
+                y_proba_class1 = y_proba[:, 0]
+            
+            # Compute soft MCC using probabilities
+            return soft_mcc(y_test_filtered, y_proba_class1)
+        except Exception as e:
+            # Fallback to hard predictions if predict_proba not available
+            print(f"    Warning: Could not use predict_proba, falling back to hard predictions: {e}")
+            pass
+    
+    # Fallback: use hard predictions
+    y_pred = clf.predict(X_test_filtered)
+    
+    # Compute score
+    if label_type == 'classification':
+        return matthews_corrcoef(y_test_filtered, y_pred)
+    else:
+        return r2_score(y_test_filtered, y_pred)
+
+
 def evaluate_classification(X_train, X_test, y_train, y_test, classifier='histgradient'):
     """Evaluate classification performance."""
     mask_train = ~np.isnan(y_train)
@@ -50,10 +225,10 @@ def evaluate_classification(X_train, X_test, y_train, y_test, classifier='histgr
         scaler = StandardScaler()
         X_train_filtered = scaler.fit_transform(X_train_filtered)
         X_test_filtered = scaler.transform(X_test_filtered)
-        clf = LogisticRegression(penalty='l2', C=1.0, max_iter=1000, random_state=42)
+        clf = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
     elif classifier == 'randomforest':
         from sklearn.ensemble import RandomForestClassifier
-        clf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
+        clf = RandomForestClassifier(n_estimators=50, random_state=42, max_depth=10, n_jobs=-1)
     else:
         raise ValueError(f"Unknown classifier: {classifier}")
     
@@ -96,7 +271,7 @@ def evaluate_regression(X_train, X_test, y_train, y_test, regressor='histgradien
 
 def multi_label_objective(params, X_train, X_test, labels_train, labels_test, 
                           label_types, optimize_scale=True, weights=None, 
-                          iteration_counter=None, classifier='histgradient'):
+                          iteration_counter=None, classifier='histgradient', trained_models=None):
     """
     Multi-label objective function.
     
@@ -111,6 +286,7 @@ def multi_label_objective(params, X_train, X_test, labels_train, labels_test,
         weights: dict of {label_name: weight} for combining scores
         iteration_counter: dict to track iterations
         classifier: Classifier to use for optimization ('histgradient', 'elasticnet', 'logistic', 'randomforest')
+        trained_models: Pre-trained models dict (if None, will train on each iteration - slow!)
     """
     n_genes = X_train.shape[1]
     
@@ -131,10 +307,16 @@ def multi_label_objective(params, X_train, X_test, labels_train, labels_test,
         y_test = labels_test[label_name]
         label_type = label_types[label_name]
         
-        if label_type == 'classification':
-            score = evaluate_classification(X_train, X_test_adjusted, y_train, y_test, classifier)
+        # Use pre-trained model if available (much faster!)
+        if trained_models is not None and label_name in trained_models:
+            # Use probability-based scoring for smooth gradients during optimization
+            score = evaluate_with_pretrained(X_test_adjusted, y_test, trained_models[label_name], use_proba=True)
         else:
-            score = evaluate_regression(X_train, X_test_adjusted, y_train, y_test, classifier)
+            # Fallback to training on each iteration (slow)
+            if label_type == 'classification':
+                score = evaluate_classification(X_train, X_test_adjusted, y_train, y_test, classifier)
+            else:
+                score = evaluate_regression(X_train, X_test_adjusted, y_train, y_test, classifier)
         
         if not np.isnan(score):
             scores[label_name] = score
@@ -158,7 +340,7 @@ def multi_label_objective(params, X_train, X_test, labels_train, labels_test,
     if iteration_counter is not None:
         iteration_counter['count'] += 1
         if iteration_counter['count'] % 10 == 0:
-            print(f"    Iteration {iteration_counter['count']}: score = {combined_score:.4f}")
+            print(f"    Iteration {iteration_counter['count']}: score = {combined_score:.4f}, shifts[:3] = {shifts[:3]}, scales[:3] = {scales[:3]}")
     
     # Minimize negative score
     return -combined_score
@@ -184,8 +366,24 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         )
     
     # Direct optimization method (original)
-    # Initialize shifts to align means
-    initial_shifts = np.nanmean(X_test, axis=0) - np.nanmean(X_train, axis=0)
+    # Initialize shifts to align means (simple baseline)
+    mean_alignment_shifts = np.nanmean(X_test, axis=0) - np.nanmean(X_train, axis=0)
+    
+    # Try to load Bayesian effective shifts as better initialization
+    try:
+        import polars as pl
+        effective_shifts_df = pl.read_csv('adjusters/effective_shifts.csv')
+        bayesian_shifts = effective_shifts_df['effective_shift'].to_numpy()
+        if len(bayesian_shifts) == n_genes:
+            initial_shifts = bayesian_shifts
+            print(f"  Using Bayesian effective shifts for initialization")
+        else:
+            initial_shifts = mean_alignment_shifts
+            print(f"  Using mean alignment for initialization (Bayesian shifts wrong size)")
+    except:
+        initial_shifts = mean_alignment_shifts
+        print(f"  Using mean alignment for initialization (Bayesian shifts not available)")
+    
     initial_scales = np.ones(n_genes)
     
     if optimize_scale:
@@ -202,6 +400,11 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         print(f"  Scales fixed to 1.0 (shift-only optimization)")
     print(f"  Optimization classifier: {classifier}")
     
+    # Pre-train classifiers for all labels (HUGE speedup!)
+    print("  Pre-training classifiers for all labels...")
+    trained_models = train_classifiers_for_labels(X_train, labels_train, label_types, classifier)
+    print(f"  Trained {len([m for m in trained_models.values() if m is not None])} classifiers")
+    
     # Optimize
     print("  Optimizing parameters across all labels...")
     iteration_counter = {'count': 0}
@@ -210,11 +413,16 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         multi_label_objective,
         initial_params,
         args=(X_train, X_test, labels_train, labels_test, label_types, 
-              optimize_scale, weights, iteration_counter, classifier),
+              optimize_scale, weights, iteration_counter, classifier, trained_models),
         method='L-BFGS-B',
         bounds=bounds,
-        options={'maxiter': 100, 'disp': False, 'ftol': 1e-4}
+        options={'maxiter': 500, 'ftol': 1e-6, 'gtol': 1e-5}
     )
+    
+    print(f"  Optimization result: {result.message}")
+    print(f"  Success: {result.success}")
+    print(f"  Number of iterations: {result.nit}")
+    print(f"  Number of function evaluations: {result.nfev}")
     
     if optimize_scale:
         optimal_shifts = result.x[:n_genes]
@@ -272,8 +480,8 @@ def find_closed_form_alignment(X_train, X_test, labels_train, labels_test,
         
         # Train linear models
         if label_type == 'classification':
-            clf_train = LogisticRegression(penalty='l2', C=1.0, max_iter=1000, random_state=42)
-            clf_test = LogisticRegression(penalty='l2', C=1.0, max_iter=1000, random_state=42)
+            clf_train = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
+            clf_test = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
             
             clf_train.fit(X_train_scaled, y_train_filtered)
             clf_test.fit(X_test_scaled, y_test_filtered)
@@ -510,27 +718,32 @@ def main():
         for label, data in results.items():
             print(f"  {label}: {data['score']:.3f} ({data['metric']})")
     
-    # 3. Multi-label DBA (closed-form)
-    print("\n" + "="*60)
-    print("3. Multi-Label DBA (closed-form linear solution)")
-    print("="*60)
-    shifts_dba_cf, scales_dba_cf, result_dba_cf = find_multi_label_alignment(
-        X_train, X_test_unadjusted, labels_train, labels_test,
-        label_types, optimize_scale=not args.shift_only, method='closed_form'
-    )
-    
-    X_test_dba_cf = (X_test_unadjusted - shifts_dba_cf) / scales_dba_cf
-    results = evaluate_all_labels(X_train, X_test_dba_cf, 
-                                  labels_train, labels_test, label_types)
-    all_results['Multi-Label DBA (closed-form)'] = results
-    for label, data in results.items():
-        print(f"  {label}: {data['score']:.3f} ({data['metric']})")
-    
-    # Save adjusted data
-    adjusted_df = pl.DataFrame({
-        gene: X_test_dba_cf[:, i] for i, gene in enumerate(common_genes)
-    })
-    adjusted_df.write_csv(output_dir / "test_genes_multi_label_dba_closed_form.csv")
+    # 3. Multi-label DBA (closed-form) - only run if no specific classifier requested
+    if args.training_classifier == "histgradient":
+        print("\n" + "="*60)
+        print("3. Multi-Label DBA (closed-form linear solution)")
+        print("="*60)
+        shifts_dba_cf, scales_dba_cf, result_dba_cf = find_multi_label_alignment(
+            X_train, X_test_unadjusted, labels_train, labels_test,
+            label_types, optimize_scale=not args.shift_only, method='closed_form'
+        )
+        
+        X_test_dba_cf = (X_test_unadjusted - shifts_dba_cf) / scales_dba_cf
+        results = evaluate_all_labels(X_train, X_test_dba_cf, 
+                                      labels_train, labels_test, label_types)
+        all_results['Multi-Label DBA (closed-form)'] = results
+        for label, data in results.items():
+            print(f"  {label}: {data['score']:.3f} ({data['metric']})")
+        
+        # Save adjusted data
+        adjusted_df = pl.DataFrame({
+            gene: X_test_dba_cf[:, i] for i, gene in enumerate(common_genes)
+        })
+        adjusted_df.write_csv(output_dir / "test_genes_multi_label_dba_closed_form.csv")
+    else:
+        print("\n" + "="*60)
+        print(f"3. Skipping closed-form (using {args.training_classifier} for direct optimization)")
+        print("="*60)
     
     # 4. Multi-label DBA (direct optimization)
     print("\n" + "="*60)
@@ -559,13 +772,18 @@ def main():
     adjusted_df.write_csv(output_dir / f"test_genes_dba_{args.training_classifier}.csv")
     
     # Save parameters
-    params_df = pl.DataFrame({
+    params_data = {
         'gene': common_genes,
-        'multi_label_dba_cf_shift': shifts_dba_cf,
-        'multi_label_dba_cf_scale': scales_dba_cf,
         'multi_label_dba_direct_shift': shifts_dba,
         'multi_label_dba_direct_scale': scales_dba,
-    })
+    }
+    
+    # Add closed-form parameters if they were computed
+    if args.training_classifier == "histgradient":
+        params_data['multi_label_dba_cf_shift'] = shifts_dba_cf
+        params_data['multi_label_dba_cf_scale'] = scales_dba_cf
+    
+    params_df = pl.DataFrame(params_data)
     params_df.write_csv(output_dir / "multi_label_dba_parameters.csv")
     
     # Also save with classifier-specific name for Snakemake compatibility

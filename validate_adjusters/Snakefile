@@ -508,7 +508,7 @@ rule evaluate_dba_trained:
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
         classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.eval_classifier],
-        adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} ({wildcards.shift_label.replace('_', '+')})",
+        adjuster_name=lambda wildcards: f"DBA: {wildcards.training_classifier.title()} ({'Shift-Only' if wildcards.shift_label == 'Shift_Only' else 'Shift+Scale'})",
     resources:
         mem_mb=2000,
         runtime=10
@@ -640,7 +640,7 @@ rule dba_train_classifier:
     resources:
         mem_mb=8000,
         runtime=lambda wildcards: 120 if wildcards.shift_type == "shift_only" else 180
-    threads: 1
+    threads: lambda wildcards: 8 if wildcards.classifier == "randomforest" else 1
     log:
         "logs/dba_train_{classifier}_{shift_type}.log"
     shell:

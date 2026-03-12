@@ -115,7 +115,7 @@ def main():
         
         # Look for evaluation JSON files in the parent directory structure
         # Pattern: outputs/classifier_results/{eval_clf}/DBA_Shift_Only_Trained_{train_clf}__{label}.json
-        results_base = output_dir.parent.parent / "classifier_results"
+        results_base = output_dir.parent / "classifier_results"
         
         if not results_base.exists():
             print(f"ERROR: Results directory not found: {results_base}")
