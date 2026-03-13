@@ -11,7 +11,7 @@ import numpy as np
 import polars as pl
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor, RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression, Ridge, SGDClassifier
-from sklearn.model_selection import StratifiedKFold, KFold
+from sklearn.model_selection import StratifiedKFold, KFold, LeaveOneOut
 from sklearn.metrics import matthews_corrcoef, r2_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
@@ -45,7 +45,11 @@ def get_regressor(classifier_name, random_state=42):
 
 
 def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_names, n_splits=5, random_state=42):
-    """Run k-fold CV on test set to get performance ceiling per classifier."""
+    """Run k-fold CV on test set to get performance ceiling per classifier.
+    
+    Args:
+        n_splits: Number of folds. Use -1 or 0 for Leave-One-Out CV.
+    """
     
     # Load gene expression and metadata
     genes_df = pl.read_csv(genes_path)
@@ -66,7 +70,11 @@ def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_na
     
     results = {}
     
-    print(f"Running {n_splits}-fold CV on test set...")
+    # Determine CV strategy
+    use_loocv = n_splits <= 0
+    cv_description = "Leave-One-Out CV" if use_loocv else f"{n_splits}-fold CV"
+    
+    print(f"Running {cv_description} on test set...")
     print(f"Samples: {len(df)}")
     print(f"Features: {len(gene_cols)}")
     print(f"Metadata columns: {len(metadata_cols)}")
@@ -108,7 +116,12 @@ def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_na
             if is_continuous:
                 # Regression task - accumulate all predictions
                 model = get_regressor(classifier_name, random_state)
-                kfold = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+                
+                # Choose CV strategy
+                if use_loocv:
+                    kfold = LeaveOneOut()
+                else:
+                    kfold = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
                 
                 all_y_true = []
                 all_y_pred = []
@@ -156,7 +169,14 @@ def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_na
                     continue
                 
                 model = get_classifier(classifier_name, random_state)
-                kfold = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+                
+                # Choose CV strategy
+                # Note: For LOOCV with classification, we can't use StratifiedKFold
+                # LeaveOneOut doesn't guarantee stratification but ensures maximum data usage
+                if use_loocv:
+                    kfold = LeaveOneOut()
+                else:
+                    kfold = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
                 
                 all_y_true = []
                 all_y_pred = []
@@ -165,7 +185,13 @@ def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_na
                 needs_scaling = classifier_name in ['Logistic (L2)', 'ElasticNet (l1=0.15)']
                 
                 try:
-                    for train_idx, test_idx in kfold.split(X_filtered, y_encoded):
+                    # For LOOCV, we don't pass y to split()
+                    if use_loocv:
+                        split_iter = kfold.split(X_filtered)
+                    else:
+                        split_iter = kfold.split(X_filtered, y_encoded)
+                    
+                    for train_idx, test_idx in split_iter:
                         X_train, X_test = X_filtered[train_idx], X_filtered[test_idx]
                         y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
                         

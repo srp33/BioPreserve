@@ -140,19 +140,94 @@ def soft_mcc(y_true, y_proba, temperature=10.0):
     return numerator / denominator
 
 
+def _is_tree_based(clf):
+    """Check if a classifier is tree-based (piecewise constant predictions)."""
+    from sklearn.ensemble import (HistGradientBoostingClassifier, HistGradientBoostingRegressor,
+                                  RandomForestClassifier, RandomForestRegressor)
+    return isinstance(clf, (HistGradientBoostingClassifier, HistGradientBoostingRegressor,
+                            RandomForestClassifier, RandomForestRegressor))
+
+
+def _smoothed_log_loss(clf, X, y_true, scaler=None, n_samples=32, noise_scale=0.03):
+    """
+    Compute log-loss averaged over noisy perturbations of the input (randomized smoothing).
+    
+    For tree-based models, predictions are piecewise constant, so the loss surface
+    is a staircase with zero gradient almost everywhere. By averaging the loss over
+    Gaussian-perturbed inputs, we convolve the staircase with a smooth kernel,
+    producing a smooth loss surface that gradient-based optimizers can follow.
+    
+    Args:
+        clf: Trained classifier with predict_proba
+        X: Input features (n_samples, n_features)
+        y_true: True labels
+        scaler: Optional StandardScaler to apply before prediction
+        n_samples: Number of noisy copies to average over
+        noise_scale: Std dev of Gaussian noise as fraction of per-feature std dev
+    
+    Returns:
+        float: Negative mean log-loss (higher = better)
+    """
+    eps = 1e-15
+    y_int = y_true.astype(int)
+    
+    # Compute noise scale from feature standard deviations
+    feature_std = np.std(X, axis=0)
+    feature_std = np.where(feature_std < eps, 1.0, feature_std)
+    sigma = noise_scale * feature_std  # (n_features,)
+    
+    rng = np.random.RandomState(42)
+    total_log_loss = 0.0
+    
+    for _ in range(n_samples):
+        X_noisy = X + rng.randn(*X.shape) * sigma
+        X_pred = scaler.transform(X_noisy) if scaler is not None else X_noisy
+        y_proba = clf.predict_proba(X_pred)
+        y_proba = np.clip(y_proba, eps, 1 - eps)
+        p_true = y_proba[np.arange(len(y_int)), y_int]
+        total_log_loss += -np.mean(np.log(p_true))
+    
+    avg_log_loss = total_log_loss / n_samples
+    return -avg_log_loss  # negative because higher = better
+
+
+def _smoothed_mse(clf, X, y_true, scaler=None, n_samples=32, noise_scale=0.03):
+    """
+    Compute MSE averaged over noisy perturbations (randomized smoothing for regression).
+    """
+    feature_std = np.std(X, axis=0)
+    feature_std = np.where(feature_std < 1e-15, 1.0, feature_std)
+    sigma = noise_scale * feature_std
+    
+    rng = np.random.RandomState(42)
+    total_mse = 0.0
+    
+    for _ in range(n_samples):
+        X_noisy = X + rng.randn(*X.shape) * sigma
+        X_pred = scaler.transform(X_noisy) if scaler is not None else X_noisy
+        y_pred = clf.predict(X_pred)
+        total_mse += np.mean((y_true - y_pred) ** 2)
+    
+    return -(total_mse / n_samples)  # negative because higher = better
+
+
 def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temperature=10.0):
     """
     Evaluate using a pre-trained classifier.
+    
+    During optimization (use_proba=True):
+      - Linear models: log-loss (classification) or negative MSE (regression)
+      - Tree-based models: same losses but averaged over Gaussian-perturbed inputs
+        (randomized smoothing) to produce a smooth loss surface for L-BFGS-B
+    
+    For final evaluation (use_proba=False): hard MCC / R².
     
     Args:
         X_test: Test features (already adjusted)
         y_test: Test labels
         trained_model: Dict with 'clf', 'scaler', 'label_type'
-        use_proba: If True, use predict_proba for smooth gradients (classification only)
-        temperature: Temperature for sigmoid sharpening in soft MCC
-    
-    Returns:
-        float: Soft MCC for classification (if use_proba), hard MCC otherwise, R2 for regression
+        use_proba: If True, use smooth loss for optimization
+        temperature: Unused, kept for API compatibility
     """
     if trained_model is None:
         return np.nan
@@ -169,34 +244,39 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temp
         if len(np.unique(y_test_filtered)) < 2:
             return np.nan
     
-    # Apply scaling if needed
-    if scaler is not None:
-        X_test_filtered = scaler.transform(X_test_filtered)
-    
-    # For classification, use probabilities for smooth gradients during optimization
-    if label_type == 'classification' and use_proba:
-        try:
-            # Get probability predictions (smooth, differentiable)
-            y_proba = clf.predict_proba(X_test_filtered)
-            
-            # Get probability of class 1
-            if y_proba.shape[1] == 2:
-                y_proba_class1 = y_proba[:, 1]
+    # For optimization: use smooth loss functions
+    if use_proba:
+        tree_based = _is_tree_based(clf)
+        
+        if label_type == 'classification':
+            if tree_based:
+                # Randomized smoothing: average log-loss over noisy perturbations
+                # Apply scaler before noise so noise is in original feature space
+                return _smoothed_log_loss(clf, X_test_filtered, y_test_filtered, scaler)
             else:
-                # Binary case with single column
-                y_proba_class1 = y_proba[:, 0]
-            
-            # Compute soft MCC using probabilities with temperature parameter
-            return soft_mcc(y_test_filtered, y_proba_class1, temperature=temperature)
-        except Exception as e:
-            # Fallback to hard predictions if predict_proba not available
-            print(f"    Warning: Could not use predict_proba, falling back to hard predictions: {e}")
-            pass
+                # Linear models: log-loss is already smooth
+                X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
+                try:
+                    y_proba = clf.predict_proba(X_pred)
+                    eps = 1e-15
+                    y_proba = np.clip(y_proba, eps, 1 - eps)
+                    p_true = y_proba[np.arange(len(y_test_filtered)), y_test_filtered.astype(int)]
+                    return -(-np.mean(np.log(p_true)))  # negative log-loss
+                except Exception as e:
+                    print(f"    Warning: log-loss failed, falling back to hard predictions: {e}")
+        
+        if label_type == 'regression':
+            if tree_based:
+                return _smoothed_mse(clf, X_test_filtered, y_test_filtered, scaler)
+            else:
+                X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
+                y_pred = clf.predict(X_pred)
+                return -np.mean((y_test_filtered - y_pred) ** 2)
     
-    # Fallback: use hard predictions
-    y_pred = clf.predict(X_test_filtered)
+    # For final evaluation: use hard metrics
+    X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
+    y_pred = clf.predict(X_pred)
     
-    # Compute score
     if label_type == 'classification':
         return matthews_corrcoef(y_test_filtered, y_pred)
     else:
