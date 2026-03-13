@@ -1,10 +1,37 @@
-metadata_column,metric,score,n_samples
-meta_er_status,MCC,0.7847888673810012,1980
-meta_menopause_status,MCC,0.3325528242238485,1980
-meta_age_at_diagnosis,R²,0.29661779546676537,1980
-meta_chemotherapy,MCC,0.3661085343751531,1980
-meta_histological_type,MCC,0.15143544645015475,1980
-meta_her2_status,MCC,0.8182805497953473,1980
-meta_age_at_diagnosis_combined_lt50,MCC,0.3325528242238485,1980
-meta_age_at_diagnosis_combined_50_69,MCC,0.06576932698585759,1980
-meta_age_at_diagnosis_combined_ge70,MCC,0.2619209803841058,1980
+classifier,metadata_column,metric,score,n_samples
+Random Forest,meta_er_status,MCC,0.8006338200232112,1980
+Random Forest,meta_menopause_status,MCC,0.2039306389168071,1980
+Random Forest,meta_age_at_diagnosis,R²,0.3178461834708455,1980
+Random Forest,meta_chemotherapy,MCC,0.38292219915753734,1980
+Random Forest,meta_histological_type,MCC,0.02097972073744525,1980
+Random Forest,meta_her2_status,MCC,0.8419827335665436,1980
+Random Forest,meta_age_at_diagnosis_combined_lt50,MCC,0.2039306389168071,1980
+Random Forest,meta_age_at_diagnosis_combined_50_69,MCC,0.10082858739759151,1980
+Random Forest,meta_age_at_diagnosis_combined_ge70,MCC,0.2118610838462741,1980
+Gradient Boosting,meta_er_status,MCC,0.7901929287439242,1980
+Gradient Boosting,meta_menopause_status,MCC,0.34427238410722844,1980
+Gradient Boosting,meta_age_at_diagnosis,R²,0.3117725401534903,1980
+Gradient Boosting,meta_chemotherapy,MCC,0.39136775382879824,1980
+Gradient Boosting,meta_histological_type,MCC,0.14434186656147538,1980
+Gradient Boosting,meta_her2_status,MCC,0.8246794102736607,1980
+Gradient Boosting,meta_age_at_diagnosis_combined_lt50,MCC,0.34427238410722844,1980
+Gradient Boosting,meta_age_at_diagnosis_combined_50_69,MCC,0.09568095616298662,1980
+Gradient Boosting,meta_age_at_diagnosis_combined_ge70,MCC,0.2622869168599007,1980
+Logistic (L2),meta_er_status,MCC,0.790805203203626,1980
+Logistic (L2),meta_menopause_status,MCC,0.3468562731395055,1980
+Logistic (L2),meta_age_at_diagnosis,R²,0.33357325472815447,1980
+Logistic (L2),meta_chemotherapy,MCC,0.4219066135116456,1980
+Logistic (L2),meta_histological_type,MCC,0.19797258658202443,1980
+Logistic (L2),meta_her2_status,MCC,0.8099566727135402,1980
+Logistic (L2),meta_age_at_diagnosis_combined_lt50,MCC,0.3468562731395055,1980
+Logistic (L2),meta_age_at_diagnosis_combined_50_69,MCC,0.06984798106478511,1980
+Logistic (L2),meta_age_at_diagnosis_combined_ge70,MCC,0.2789205058848877,1980
+ElasticNet (l1=0.15),meta_er_status,MCC,0.7408355405690915,1980
+ElasticNet (l1=0.15),meta_menopause_status,MCC,0.32182958774966597,1980
+ElasticNet (l1=0.15),meta_age_at_diagnosis,R²,0.33357325472815447,1980
+ElasticNet (l1=0.15),meta_chemotherapy,MCC,0.34336610027550546,1980
+ElasticNet (l1=0.15),meta_histological_type,MCC,0.1739568697929318,1980
+ElasticNet (l1=0.15),meta_her2_status,MCC,0.7730012058189372,1980
+ElasticNet (l1=0.15),meta_age_at_diagnosis_combined_lt50,MCC,0.32182958774966597,1980
+ElasticNet (l1=0.15),meta_age_at_diagnosis_combined_50_69,MCC,0.02039131189022198,1980
+ElasticNet (l1=0.15),meta_age_at_diagnosis_combined_ge70,MCC,0.25187341132370283,1980

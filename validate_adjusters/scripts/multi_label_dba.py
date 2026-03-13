@@ -30,8 +30,9 @@ def train_classifiers_for_labels(X_train, labels_train, label_types, classifier=
     """
     trained_models = {}
     
-    print(f"  Pre-training {len(labels_train)} classifiers (one per label)...")
+    print(f"  Pre-training {len(labels_train)} classifiers (one per label)...", flush=True)
     
+    trained_count = 0
     for label_name, y_train in labels_train.items():
         label_type = label_types[label_name]
         mask_train = ~np.isnan(y_train)
@@ -77,7 +78,8 @@ def train_classifiers_for_labels(X_train, labels_train, label_types, classifier=
                 clf = Ridge(alpha=1.0, random_state=42)
         
         clf.fit(X_train_filtered, y_train_filtered)
-        print(f"    ✓ Trained {classifier} for {label_name}")
+        trained_count += 1
+        print(f"    ✓ [{trained_count}/{len(labels_train)}] Trained {classifier} for {label_name}", flush=True)
         
         trained_models[label_name] = {
             'clf': clf,
@@ -89,16 +91,21 @@ def train_classifiers_for_labels(X_train, labels_train, label_types, classifier=
     return trained_models
 
 
-def soft_mcc(y_true, y_proba):
+def soft_mcc(y_true, y_proba, temperature=10.0):
     """
-    Compute a differentiable approximation of Matthews Correlation Coefficient.
+    Compute an improved differentiable approximation of Matthews Correlation Coefficient.
     
-    Uses predicted probabilities instead of hard predictions to create a smooth,
-    differentiable objective function for optimization.
+    Uses a sigmoid-sharpened version of predicted probabilities to better approximate
+    the hard decision boundary at 0.5, while maintaining differentiability.
+    
+    The temperature parameter controls how sharp the sigmoid is:
+    - Higher temperature (e.g., 10-20): Sharper, closer to hard threshold
+    - Lower temperature (e.g., 1-5): Smoother, more like original probabilities
     
     Args:
         y_true: True binary labels (0 or 1)
         y_proba: Predicted probabilities for class 1 (continuous [0, 1])
+        temperature: Sharpness of the sigmoid around 0.5 (higher = sharper)
     
     Returns:
         float: Soft MCC in range [-1, 1]
@@ -107,20 +114,20 @@ def soft_mcc(y_true, y_proba):
     y_true = np.asarray(y_true)
     y_proba = np.asarray(y_proba)
     
-    # Get probabilities for both classes
-    p1 = y_proba  # P(class=1)
-    p0 = 1 - y_proba  # P(class=0)
+    # Apply sigmoid sharpening around 0.5 decision boundary
+    # This makes the soft MCC more sensitive to changes near the threshold
+    # sigmoid(temperature * (p - 0.5)) maps:
+    #   p=0.5 -> 0.5 (unchanged)
+    #   p>0.5 -> closer to 1.0 (sharpened)
+    #   p<0.5 -> closer to 0.0 (sharpened)
+    p1_sharp = 1.0 / (1.0 + np.exp(-temperature * (y_proba - 0.5)))
+    p0_sharp = 1.0 - p1_sharp
     
-    # Soft confusion matrix elements
-    # TP: true label is 1, predicted probability of 1
-    # TN: true label is 0, predicted probability of 0
-    # FP: true label is 0, predicted probability of 1
-    # FN: true label is 1, predicted probability of 0
-    
-    tp = np.sum(y_true * p1)  # sum of P(pred=1) when true=1
-    tn = np.sum((1 - y_true) * p0)  # sum of P(pred=0) when true=0
-    fp = np.sum((1 - y_true) * p1)  # sum of P(pred=1) when true=0
-    fn = np.sum(y_true * p0)  # sum of P(pred=0) when true=1
+    # Soft confusion matrix elements using sharpened probabilities
+    tp = np.sum(y_true * p1_sharp)
+    tn = np.sum((1 - y_true) * p0_sharp)
+    fp = np.sum((1 - y_true) * p1_sharp)
+    fn = np.sum(y_true * p0_sharp)
     
     # Compute soft MCC
     numerator = tp * tn - fp * fn
@@ -133,7 +140,7 @@ def soft_mcc(y_true, y_proba):
     return numerator / denominator
 
 
-def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True):
+def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temperature=10.0):
     """
     Evaluate using a pre-trained classifier.
     
@@ -142,6 +149,7 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True):
         y_test: Test labels
         trained_model: Dict with 'clf', 'scaler', 'label_type'
         use_proba: If True, use predict_proba for smooth gradients (classification only)
+        temperature: Temperature for sigmoid sharpening in soft MCC
     
     Returns:
         float: Soft MCC for classification (if use_proba), hard MCC otherwise, R2 for regression
@@ -178,8 +186,8 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True):
                 # Binary case with single column
                 y_proba_class1 = y_proba[:, 0]
             
-            # Compute soft MCC using probabilities
-            return soft_mcc(y_test_filtered, y_proba_class1)
+            # Compute soft MCC using probabilities with temperature parameter
+            return soft_mcc(y_test_filtered, y_proba_class1, temperature=temperature)
         except Exception as e:
             # Fallback to hard predictions if predict_proba not available
             print(f"    Warning: Could not use predict_proba, falling back to hard predictions: {e}")
@@ -271,7 +279,8 @@ def evaluate_regression(X_train, X_test, y_train, y_test, regressor='histgradien
 
 def multi_label_objective(params, X_train, X_test, labels_train, labels_test, 
                           label_types, optimize_scale=True, weights=None, 
-                          iteration_counter=None, classifier='histgradient', trained_models=None):
+                          iteration_counter=None, classifier='histgradient', trained_models=None,
+                          temperature=10.0):
     """
     Multi-label objective function.
     
@@ -287,6 +296,7 @@ def multi_label_objective(params, X_train, X_test, labels_train, labels_test,
         iteration_counter: dict to track iterations
         classifier: Classifier to use for optimization ('histgradient', 'elasticnet', 'logistic', 'randomforest')
         trained_models: Pre-trained models dict (if None, will train on each iteration - slow!)
+        temperature: Temperature for sigmoid sharpening in soft MCC (higher = sharper)
     """
     n_genes = X_train.shape[1]
     
@@ -310,7 +320,8 @@ def multi_label_objective(params, X_train, X_test, labels_train, labels_test,
         # Use pre-trained model if available (much faster!)
         if trained_models is not None and label_name in trained_models:
             # Use probability-based scoring for smooth gradients during optimization
-            score = evaluate_with_pretrained(X_test_adjusted, y_test, trained_models[label_name], use_proba=True)
+            score = evaluate_with_pretrained(X_test_adjusted, y_test, trained_models[label_name], 
+                                            use_proba=True, temperature=temperature)
         else:
             # Fallback to training on each iteration (slow)
             if label_type == 'classification':
@@ -340,15 +351,76 @@ def multi_label_objective(params, X_train, X_test, labels_train, labels_test,
     if iteration_counter is not None:
         iteration_counter['count'] += 1
         if iteration_counter['count'] % 10 == 0:
-            print(f"    Iteration {iteration_counter['count']}: score = {combined_score:.4f}, shifts[:3] = {shifts[:3]}, scales[:3] = {scales[:3]}")
+            # Show top 3 weighted labels
+            top_labels = sorted(scores.items(), key=lambda x: weights.get(x[0], 1.0) * x[1], reverse=True)[:3]
+            label_str = ", ".join([f"{k}={v:.3f}(w={weights.get(k, 1.0):.2f})" for k, v in top_labels])
+            print(f"    Iter {iteration_counter['count']}: combined={combined_score:.4f} | {label_str}", flush=True)
     
     # Minimize negative score
     return -combined_score
 
 
+from pathlib import Path
+
+
+def load_cv_ceiling_weights(cv_results_path, classifier_name, label_types):
+    """
+    Load CV ceiling results and compute weights based on achievable performance.
+    
+    Labels with higher CV ceiling MCC/R² get higher weights in optimization.
+    
+    Args:
+        cv_results_path: Path to test_set_cv_results.csv
+        classifier_name: Name of classifier (e.g., 'Gradient Boosting', 'Random Forest')
+        label_types: dict of {label_name: 'classification' or 'regression'}
+    
+    Returns:
+        dict: {label_name: weight} where weight is proportional to CV ceiling score
+    """
+    try:
+        import polars as pl
+        cv_df = pl.read_csv(cv_results_path)
+        
+        # Filter for this classifier
+        cv_df = cv_df.filter(pl.col('classifier') == classifier_name)
+        
+        weights = {}
+        for label_name in label_types.keys():
+            # Find CV ceiling for this label
+            label_row = cv_df.filter(pl.col('metadata_column') == label_name)
+            
+            if len(label_row) == 0:
+                # No CV ceiling available, use default weight
+                weights[label_name] = 1.0
+                continue
+            
+            score = label_row['score'][0]
+            
+            # Use absolute value of score as weight (higher ceiling = higher weight)
+            # Add small epsilon to avoid zero weights
+            weight = max(abs(score), 0.01)
+            
+            # Square the weight to emphasize high-performing labels even more
+            weight = weight ** 2
+            
+            weights[label_name] = weight
+        
+        print(f"  Loaded CV ceiling weights for {classifier_name}:", flush=True)
+        for label_name, weight in sorted(weights.items(), key=lambda x: x[1], reverse=True)[:5]:
+            print(f"    {label_name}: {weight:.4f}", flush=True)
+        
+        return weights
+        
+    except Exception as e:
+        print(f"  Warning: Could not load CV ceiling weights: {e}", flush=True)
+        print(f"  Using uniform weights", flush=True)
+        return {k: 1.0 for k in label_types.keys()}
+
+
 def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
                                label_types, optimize_scale=True, weights=None,
-                               method='direct', classifier='histgradient'):
+                               method='direct', classifier='histgradient', cv_results_path=None,
+                               temperature=10.0):
     """
     Find optimal shift/scale parameters for multi-label alignment.
     
@@ -356,6 +428,8 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         method: 'direct' (optimize with specified classifier) or 
                 'closed_form' (linear closed-form solution)
         classifier: Classifier to use for optimization ('histgradient', 'elasticnet', 'logistic', 'randomforest')
+        cv_results_path: Path to CV ceiling results CSV for weight calculation
+        temperature: Temperature for sigmoid sharpening in soft MCC (higher = sharper)
     """
     n_genes = X_train.shape[1]
     
@@ -364,6 +438,18 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
             X_train, X_test, labels_train, labels_test,
             label_types, optimize_scale, weights
         )
+    
+    # Load CV ceiling-based weights if available and no weights provided
+    if weights is None and cv_results_path is not None:
+        # Map classifier names
+        classifier_name_map = {
+            'histgradient': 'Gradient Boosting',
+            'elasticnet': 'ElasticNet (l1=0.15)',
+            'logistic': 'Logistic (L2)',
+            'randomforest': 'Random Forest'
+        }
+        classifier_display_name = classifier_name_map.get(classifier, classifier)
+        weights = load_cv_ceiling_weights(cv_results_path, classifier_display_name, label_types)
     
     # Direct optimization method (original)
     # Initialize shifts to align means (simple baseline)
@@ -393,36 +479,37 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         initial_params = initial_shifts
         bounds = [(None, None)] * n_genes
     
-    print(f"  Initial shifts: {initial_shifts[:5]}")
+    print(f"  Initial shifts: {initial_shifts[:5]}", flush=True)
     if optimize_scale:
-        print(f"  Initial scales: {initial_scales[:5]}")
+        print(f"  Initial scales: {initial_scales[:5]}", flush=True)
     else:
-        print(f"  Scales fixed to 1.0 (shift-only optimization)")
-    print(f"  Optimization classifier: {classifier}")
+        print(f"  Scales fixed to 1.0 (shift-only optimization)", flush=True)
+    print(f"  Optimization classifier: {classifier}", flush=True)
+    print(f"  Soft MCC temperature: {temperature} (higher = sharper decision boundary)", flush=True)
     
     # Pre-train classifiers for all labels (HUGE speedup!)
-    print("  Pre-training classifiers for all labels...")
+    print("  Pre-training classifiers for all labels...", flush=True)
     trained_models = train_classifiers_for_labels(X_train, labels_train, label_types, classifier)
-    print(f"  Trained {len([m for m in trained_models.values() if m is not None])} classifiers")
+    print(f"  Trained {len([m for m in trained_models.values() if m is not None])} classifiers", flush=True)
     
     # Optimize
-    print("  Optimizing parameters across all labels...")
+    print("  Optimizing parameters across all labels...", flush=True)
     iteration_counter = {'count': 0}
     
     result = minimize(
         multi_label_objective,
         initial_params,
         args=(X_train, X_test, labels_train, labels_test, label_types, 
-              optimize_scale, weights, iteration_counter, classifier, trained_models),
+              optimize_scale, weights, iteration_counter, classifier, trained_models, temperature),
         method='L-BFGS-B',
         bounds=bounds,
         options={'maxiter': 500, 'ftol': 1e-6, 'gtol': 1e-5}
     )
     
-    print(f"  Optimization result: {result.message}")
-    print(f"  Success: {result.success}")
-    print(f"  Number of iterations: {result.nit}")
-    print(f"  Number of function evaluations: {result.nfev}")
+    print(f"  Optimization result: {result.message}", flush=True)
+    print(f"  Success: {result.success}", flush=True)
+    print(f"  Number of iterations: {result.nit}", flush=True)
+    print(f"  Number of function evaluations: {result.nfev}", flush=True)
     
     if optimize_scale:
         optimal_shifts = result.x[:n_genes]
@@ -431,9 +518,9 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         optimal_shifts = result.x
         optimal_scales = np.ones(n_genes)
     
-    print(f"  Optimal shifts: {optimal_shifts[:5]}")
-    print(f"  Optimal scales: {optimal_scales[:5]}")
-    print(f"  Final loss: {result.fun:.4f}")
+    print(f"  Optimal shifts: {optimal_shifts[:5]}", flush=True)
+    print(f"  Optimal scales: {optimal_scales[:5]}", flush=True)
+    print(f"  Final loss: {result.fun:.4f}", flush=True)
     
     return optimal_shifts, optimal_scales, result
 
@@ -599,21 +686,28 @@ def main():
                        default=['histgradient'],
                        choices=['histgradient', 'elasticnet', 'logistic', 'randomforest'],
                        help="Classifiers to use for evaluation")
+    parser.add_argument("--temperature", type=float, default=10.0,
+                       help="Temperature for sigmoid sharpening in soft MCC (higher = sharper, closer to hard threshold). Default: 10.0")
     parser.add_argument("--output-dir", required=True)
     
     args = parser.parse_args()
     
-    print("="*60)
-    print("Multi-Label Decision Boundary Alignment")
-    print("="*60)
+    print("="*60, flush=True)
+    print("Multi-Label Decision Boundary Alignment", flush=True)
+    print("="*60, flush=True)
     
     # Load data
-    print("\nLoading data...")
+    print("\nLoading data...", flush=True)
     train_genes_df = pl.read_csv(args.train_genes)
+    print(f"  ✓ Loaded training genes: {train_genes_df.shape}", flush=True)
     test_unadjusted_df = pl.read_csv(args.test_genes_unadjusted)
+    print(f"  ✓ Loaded test genes (unadjusted): {test_unadjusted_df.shape}", flush=True)
     test_bayesian_df = pl.read_csv(args.test_genes_bayesian)
+    print(f"  ✓ Loaded test genes (Bayesian): {test_bayesian_df.shape}", flush=True)
     train_meta_df = pl.read_csv(args.train_metadata)
+    print(f"  ✓ Loaded training metadata: {train_meta_df.shape}", flush=True)
     test_meta_df = pl.read_csv(args.test_metadata)
+    print(f"  ✓ Loaded test metadata: {test_meta_df.shape}", flush=True)
     
     # Load effective shift data if provided
     test_effective_df = None
@@ -626,7 +720,7 @@ def main():
                    if g in test_unadjusted_df.columns 
                    and g in test_bayesian_df.columns]
     
-    print(f"Common genes: {len(common_genes)}")
+    print(f"Common genes: {len(common_genes)}", flush=True)
     
     # Extract gene data
     X_train = train_genes_df.select(common_genes).to_numpy()
@@ -637,16 +731,18 @@ def main():
         X_test_effective = test_effective_df.select(common_genes).to_numpy()
     
     # Prepare labels
-    print("\nPreparing labels...")
+    print("\nPreparing labels...", flush=True)
     continuous_metadata = set(args.continuous_metadata)
     
     labels_train = {}
     labels_test = {}
     label_types = {}
     
+    label_count = 0
     for col in train_meta_df.columns:
         if col.startswith('meta_'):
             label_name = col
+            label_count += 1
             
             train_vals = train_meta_df[col].to_numpy()
             test_vals = test_meta_df[col].to_numpy()
@@ -675,10 +771,12 @@ def main():
                 ])
                 label_types[label_name] = 'classification'
     
-    print(f"Labels: {list(labels_train.keys())}")
+    print(f"  ✓ Prepared {label_count} labels", flush=True)
+    print(f"Labels: {list(labels_train.keys())}", flush=True)
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"  ✓ Output directory: {output_dir}", flush=True)
     
     # Store results
     all_results = {}
@@ -746,32 +844,45 @@ def main():
         print("="*60)
     
     # 4. Multi-label DBA (direct optimization)
-    print("\n" + "="*60)
-    print("4. Multi-Label DBA (direct optimization)")
-    print("="*60)
+    print("\n" + "="*60, flush=True)
+    print("4. Multi-Label DBA (direct optimization)", flush=True)
+    print("="*60, flush=True)
+    
+    # Try to load CV ceiling results for weighting
+    cv_results_path = output_dir.parent / "test_set_cv_results.csv"
+    if not cv_results_path.exists():
+        cv_results_path = None
+        print("  Note: CV ceiling results not found, using uniform weights", flush=True)
+    
     shifts_dba, scales_dba, result_dba = find_multi_label_alignment(
         X_train, X_test_unadjusted, labels_train, labels_test,
         label_types, optimize_scale=not args.shift_only, method='direct',
-        classifier=args.training_classifier
+        classifier=args.training_classifier, cv_results_path=cv_results_path,
+        temperature=args.temperature
     )
     
     X_test_dba = (X_test_unadjusted - shifts_dba) / scales_dba
+    print("  Evaluating final performance...", flush=True)
     results = evaluate_all_labels(X_train, X_test_dba, 
                                   labels_train, labels_test, label_types)
     all_results['Multi-Label DBA (direct)'] = results
     for label, data in results.items():
-        print(f"  {label}: {data['score']:.3f} ({data['metric']})")
+        print(f"  {label}: {data['score']:.3f} ({data['metric']})", flush=True)
     
     # Save adjusted data
+    print("  Saving adjusted data...", flush=True)
     adjusted_df = pl.DataFrame({
         gene: X_test_dba[:, i] for i, gene in enumerate(common_genes)
     })
     adjusted_df.write_csv(output_dir / "test_genes_multi_label_dba_direct.csv")
+    print(f"    ✓ Saved: test_genes_multi_label_dba_direct.csv", flush=True)
     
     # Also save with classifier-specific name for Snakemake compatibility
     adjusted_df.write_csv(output_dir / f"test_genes_dba_{args.training_classifier}.csv")
+    print(f"    ✓ Saved: test_genes_dba_{args.training_classifier}.csv", flush=True)
     
     # Save parameters
+    print("  Saving parameters...", flush=True)
     params_data = {
         'gene': common_genes,
         'multi_label_dba_direct_shift': shifts_dba,
@@ -785,16 +896,19 @@ def main():
     
     params_df = pl.DataFrame(params_data)
     params_df.write_csv(output_dir / "multi_label_dba_parameters.csv")
+    print(f"    ✓ Saved: multi_label_dba_parameters.csv", flush=True)
     
     # Also save with classifier-specific name for Snakemake compatibility
     params_df.write_csv(output_dir / f"dba_parameters_{args.training_classifier}.csv")
+    print(f"    ✓ Saved: dba_parameters_{args.training_classifier}.csv", flush=True)
     
     # Create comparison table
-    print("\n" + "="*60)
-    print("COMPARISON ACROSS ALL LABELS")
-    print("="*60)
+    print("\n" + "="*60, flush=True)
+    print("COMPARISON ACROSS ALL LABELS", flush=True)
+    print("="*60, flush=True)
     
     # Prepare data for CSV
+    print("  Creating comparison table...", flush=True)
     comparison_data = []
     for method_name, method_results in all_results.items():
         for label_name, label_data in method_results.items():
@@ -807,16 +921,17 @@ def main():
     
     comparison_df = pl.DataFrame(comparison_data)
     comparison_df.write_csv(output_dir / "multi_label_comparison.csv")
+    print(f"  ✓ Saved: multi_label_comparison.csv", flush=True)
     
     # Print summary table
-    print(f"\n{'Method':<30} {'Label':<25} {'Metric':<6} {'Score':>8}")
-    print("-" * 75)
+    print(f"\n{'Method':<30} {'Label':<25} {'Metric':<6} {'Score':>8}", flush=True)
+    print("-" * 75, flush=True)
     for row in comparison_data:
-        print(f"{row['method']:<30} {row['label']:<25} {row['metric']:<6} {row['score']:>8.3f}")
+        print(f"{row['method']:<30} {row['label']:<25} {row['metric']:<6} {row['score']:>8.3f}", flush=True)
     
-    print("\n" + "="*60)
-    print(f"Results saved to: {output_dir}")
-    print("="*60)
+    print("\n" + "="*60, flush=True)
+    print(f"Results saved to: {output_dir}", flush=True)
+    print("="*60, flush=True)
 
 
 if __name__ == "__main__":

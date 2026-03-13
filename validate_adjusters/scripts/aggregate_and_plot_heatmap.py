@@ -96,8 +96,11 @@ def create_heatmap(results_df, classifier_name, cv_results_df, output_path):
     
     # Add CV results as a row
     if cv_results_df is not None:
+        # Filter CV results for this classifier only
+        cv_filtered = cv_results_df.filter(pl.col('classifier') == classifier_name)
+        
         cv_rows = []
-        for row in cv_results_df.iter_rows(named=True):
+        for row in cv_filtered.iter_rows(named=True):
             cv_rows.append({
                 'adjuster_display': 'CV Ceiling (Test Set)',
                 'label': row['metadata_column'],

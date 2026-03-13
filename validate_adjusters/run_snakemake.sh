@@ -14,4 +14,5 @@ pixi run snakemake \
     --jobs 100 \
     --resources mem_mb=50000 runtime=1440 \
     --rerun-incomplete \
+    --rerun-triggers mtime \
     --latency-wait 30

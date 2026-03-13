@@ -47,4 +47,4 @@ continuous_metadata:
   - "meta_age_at_diagnosis"
 
 # Cross-validation settings for test set ceiling analysis
-cv_n_splits: 5
+cv_n_splits: 20

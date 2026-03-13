@@ -80,11 +80,12 @@ rule test_set_cv:
         results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv"
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
+        classifiers=" ".join([f'"{name}"' for name in CLASSIFIER_NAMES.values()]),
         n_splits=config.get("cv_n_splits", 5)
     resources:
-        mem_mb=4000,
-        runtime=60
-    threads: 1
+        mem_mb=8000,
+        runtime=120
+    threads: 4
     log:
         "logs/test_set_cv.log"
     shell:
@@ -93,6 +94,7 @@ rule test_set_cv:
             --genes {input.test_genes} \
             --metadata {input.test_metadata} \
             --continuous-metadata {params.continuous_metadata} \
+            --classifiers {params.classifiers} \
             --n-splits {params.n_splits} \
             --output {output.results} \
             &> {log}
@@ -177,9 +179,9 @@ rule cross_dataset_classify:
         ],
         # Ensure effective shift only is created first
         effective_shifts="adjusters/effective_shifts.csv",
-        # Ensure multi-label DBA outputs are created (absolute paths)
-        multi_label_dba_shift_only=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_direct.csv"),
-        multi_label_dba_shift_scale=os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_direct.csv"),
+        # Ensure multi-label DBA outputs are created (relative paths for proper DAG building)
+        multi_label_dba_shift_only=f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/test_genes_multi_label_dba_direct.csv",
+        multi_label_dba_shift_scale=f"{OUTPUT_FOLDER}/multi_label_dba_shift_scale/test_genes_multi_label_dba_direct.csv",
     output:
         results=f"{OUTPUT_FOLDER}/classification_results.csv",
     params:
@@ -187,10 +189,10 @@ rule cross_dataset_classify:
             shlex.quote(f"{k}={os.path.join(BASE, v['train'])}:{os.path.join(BASE, v['test'])}")
             for k, v in config["adjusters"].items()
         ),
-        # Add multi-label DBA adjusters with absolute paths
+        # Add multi-label DBA adjusters with absolute paths constructed from inputs
         adjusters_dba=lambda wildcards, input: " ".join([
-            shlex.quote(f"multi_label_dba_shift_only={os.path.join(BASE, 'adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv')}:{input.multi_label_dba_shift_only}"),
-            shlex.quote(f"multi_label_dba_shift_scale={os.path.join(BASE, 'adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv')}:{input.multi_label_dba_shift_scale}"),
+            shlex.quote(f"multi_label_dba_shift_only={os.path.join(BASE, 'adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv')}:{os.path.abspath(input.multi_label_dba_shift_only)}"),
+            shlex.quote(f"multi_label_dba_shift_scale={os.path.join(BASE, 'adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv')}:{os.path.abspath(input.multi_label_dba_shift_scale)}"),
         ]),
         continuous_metadata=" ".join(config["continuous_metadata"]),
     resources:
@@ -463,7 +465,7 @@ rule evaluate_adjuster_label:
 rule evaluate_multi_label_dba:
     input:
         train_genes=os.path.join(BASE, "adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv"),
-        test_genes=lambda wildcards: os.path.join(BASE, f"{OUTPUT_FOLDER}/multi_label_dba_{wildcards.shift_type}/test_genes_multi_label_dba_direct.csv"),
+        test_genes=f"{OUTPUT_FOLDER}/multi_label_dba_{{shift_type}}/test_genes_multi_label_dba_direct.csv",
         train_metadata=X_TRAIN,
         test_metadata=X_TEST,
     output:
