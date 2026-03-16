@@ -92,9 +92,10 @@ rule test_set_cv_per_classifier_label:
         classifier_name=lambda wildcards: f'"{CLASSIFIER_NAMES[wildcards.classifier]}"',
         n_splits=config.get("cv_n_splits", 5)
     resources:
-        mem_mb=4000,
-        runtime=120
-    threads: 1
+        mem_mb=8000,
+        runtime=60,
+        slurm_partition="m12"
+    threads: 32
     log:
         "logs/test_set_cv_{classifier}_{label}.log"
     shell:
@@ -122,7 +123,14 @@ rule test_set_cv_merge:
         results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv"
     run:
         import pandas as pd
-        dfs = [pd.read_csv(f) for f in input.parts]
+        dfs = []
+        for f in input.parts:
+            try:
+                df = pd.read_csv(f)
+                if len(df) > 0:
+                    dfs.append(df)
+            except pd.errors.EmptyDataError:
+                pass
         pd.concat(dfs, ignore_index=True).to_csv(output.results, index=False)
 
 
