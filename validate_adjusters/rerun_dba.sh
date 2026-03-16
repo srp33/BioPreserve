@@ -7,16 +7,18 @@
 #SBATCH --output=logs/snakemake_rerun_dba_%A.log
 #SBATCH --requeue
 
-# Delete outputs that depend on multi_label_dba.py (which now uses log-loss instead of soft MCC)
+# Delete outputs that depend on multi_label_dba.py to force a clean re-run.
 # Non-DBA outputs (test_set_cv, oracle_analysis, gene_analysis, etc.) are unaffected.
 
-echo "Deleting DBA-related outputs to force re-run with log-loss objective..."
+echo "Deleting DBA-related outputs to force re-run..."
 
 # Direct outputs of multi_label_dba.py
 rm -rf outputs/multi_label_dba_shift_only
 rm -rf outputs/multi_label_dba_shift_scale
 rm -rf outputs/dba_classifier_comparison_shift_only
 rm -rf outputs/dba_classifier_comparison_shift_scale
+rm -rf outputs/dba_optimizer_comparison_shift_only
+rm -rf outputs/dba_optimizer_comparison_shift_scale
 
 # Downstream: classifier evaluation JSONs for DBA and ORACLE methods
 # (keep METHOD_* files since those don't depend on multi_label_dba.py)

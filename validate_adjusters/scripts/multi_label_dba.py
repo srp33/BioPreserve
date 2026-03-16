@@ -148,111 +148,48 @@ def _is_tree_based(clf):
                             RandomForestClassifier, RandomForestRegressor))
 
 
-def _smoothed_log_loss(clf, X, y_true, scaler=None, n_samples=32, noise_scale=0.03):
-    """
-    Compute log-loss averaged over noisy perturbations of the input (randomized smoothing).
-    
-    For tree-based models, predictions are piecewise constant, so the loss surface
-    is a staircase with zero gradient almost everywhere. By averaging the loss over
-    Gaussian-perturbed inputs, we convolve the staircase with a smooth kernel,
-    producing a smooth loss surface that gradient-based optimizers can follow.
-    
-    Args:
-        clf: Trained classifier with predict_proba
-        X: Input features (n_samples, n_features)
-        y_true: True labels
-        scaler: Optional StandardScaler to apply before prediction
-        n_samples: Number of noisy copies to average over
-        noise_scale: Std dev of Gaussian noise as fraction of per-feature std dev
-    
-    Returns:
-        float: Negative mean log-loss (higher = better)
-    """
-    eps = 1e-15
-    y_int = y_true.astype(int)
-    
-    # Compute noise scale from feature standard deviations
-    feature_std = np.std(X, axis=0)
-    feature_std = np.where(feature_std < eps, 1.0, feature_std)
-    sigma = noise_scale * feature_std  # (n_features,)
-    
-    rng = np.random.RandomState(42)
-    total_log_loss = 0.0
-    
-    for _ in range(n_samples):
-        X_noisy = X + rng.randn(*X.shape) * sigma
-        X_pred = scaler.transform(X_noisy) if scaler is not None else X_noisy
-        y_proba = clf.predict_proba(X_pred)
-        y_proba = np.clip(y_proba, eps, 1 - eps)
-        p_true = y_proba[np.arange(len(y_int)), y_int]
-        total_log_loss += -np.mean(np.log(p_true))
-    
-    avg_log_loss = total_log_loss / n_samples
-    return -avg_log_loss  # negative because higher = better
-
-
-def _smoothed_mse(clf, X, y_true, scaler=None, n_samples=32, noise_scale=0.03):
-    """
-    Compute MSE averaged over noisy perturbations (randomized smoothing for regression).
-    """
-    feature_std = np.std(X, axis=0)
-    feature_std = np.where(feature_std < 1e-15, 1.0, feature_std)
-    sigma = noise_scale * feature_std
-    
-    rng = np.random.RandomState(42)
-    total_mse = 0.0
-    
-    for _ in range(n_samples):
-        X_noisy = X + rng.randn(*X.shape) * sigma
-        X_pred = scaler.transform(X_noisy) if scaler is not None else X_noisy
-        y_pred = clf.predict(X_pred)
-        total_mse += np.mean((y_true - y_pred) ** 2)
-    
-    return -(total_mse / n_samples)  # negative because higher = better
-
-
 def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temperature=10.0):
     """
     Evaluate using a pre-trained classifier.
-    
+
     During optimization (use_proba=True):
       - Linear models: log-loss (classification) or negative MSE (regression)
-      - Tree-based models: same losses but averaged over Gaussian-perturbed inputs
-        (randomized smoothing) to produce a smooth loss surface for L-BFGS-B
-    
+      - Tree-based models: hard MCC / R² (no gradient needed for Nelder-Mead / Bayesian)
+
     For final evaluation (use_proba=False): hard MCC / R².
-    
+
     Args:
         X_test: Test features (already adjusted)
         y_test: Test labels
         trained_model: Dict with 'clf', 'scaler', 'label_type'
-        use_proba: If True, use smooth loss for optimization
+        use_proba: If True, use smooth loss for optimization (linear models only)
         temperature: Unused, kept for API compatibility
     """
     if trained_model is None:
         return np.nan
-    
+
     clf = trained_model['clf']
     scaler = trained_model['scaler']
     label_type = trained_model['label_type']
-    
+
     mask_test = ~np.isnan(y_test)
     X_test_filtered = X_test[mask_test]
     y_test_filtered = y_test[mask_test]
-    
+
     if label_type == 'classification':
         if len(np.unique(y_test_filtered)) < 2:
             return np.nan
-    
-    # For optimization: use smooth loss functions
+
+    # For optimization: use smooth loss for linear models, hard metrics for trees
     if use_proba:
         tree_based = _is_tree_based(clf)
-        
+
         if label_type == 'classification':
             if tree_based:
-                # Randomized smoothing: average log-loss over noisy perturbations
-                # Apply scaler before noise so noise is in original feature space
-                return _smoothed_log_loss(clf, X_test_filtered, y_test_filtered, scaler)
+                # Tree-based: use hard MCC (gradient-free optimizers handle this)
+                X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
+                y_pred = clf.predict(X_pred)
+                return matthews_corrcoef(y_test_filtered, y_pred)
             else:
                 # Linear models: log-loss is already smooth
                 X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
@@ -264,19 +201,22 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temp
                     return -(-np.mean(np.log(p_true)))  # negative log-loss
                 except Exception as e:
                     print(f"    Warning: log-loss failed, falling back to hard predictions: {e}")
-        
+
         if label_type == 'regression':
             if tree_based:
-                return _smoothed_mse(clf, X_test_filtered, y_test_filtered, scaler)
+                # Tree-based: use hard R² (gradient-free optimizers handle this)
+                X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
+                y_pred = clf.predict(X_pred)
+                return r2_score(y_test_filtered, y_pred)
             else:
                 X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
                 y_pred = clf.predict(X_pred)
                 return -np.mean((y_test_filtered - y_pred) ** 2)
-    
+
     # For final evaluation: use hard metrics
     X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
     y_pred = clf.predict(X_pred)
-    
+
     if label_type == 'classification':
         return matthews_corrcoef(y_test_filtered, y_pred)
     else:
@@ -430,11 +370,26 @@ def multi_label_objective(params, X_train, X_test, labels_train, labels_test,
     # Track progress
     if iteration_counter is not None:
         iteration_counter['count'] += 1
+        # Track best score seen so far
+        if 'best' not in iteration_counter or -combined_score < iteration_counter['best']:
+            iteration_counter['best'] = -combined_score
+            iteration_counter['best_iter'] = iteration_counter['count']
+        
         if iteration_counter['count'] % 10 == 0:
+            # Compute shift delta from initial params
+            initial_shifts = iteration_counter.get('initial_shifts')
+            shift_delta_str = ""
+            if initial_shifts is not None:
+                delta = shifts - initial_shifts
+                l2_norm = np.sqrt(np.sum(delta**2))
+                n_moved = np.sum(np.abs(delta) > 1e-4)
+                shift_delta_str = f" | Δshift L2={l2_norm:.4f}, {n_moved}/{len(shifts)} genes moved"
+            
             # Show top 3 weighted labels
             top_labels = sorted(scores.items(), key=lambda x: weights.get(x[0], 1.0) * x[1], reverse=True)[:3]
             label_str = ", ".join([f"{k}={v:.3f}(w={weights.get(k, 1.0):.2f})" for k, v in top_labels])
-            print(f"    Iter {iteration_counter['count']}: combined={combined_score:.4f} | {label_str}", flush=True)
+            best_str = f" (best={-iteration_counter['best']:.4f}@{iteration_counter['best_iter']})"
+            print(f"    Iter {iteration_counter['count']}: combined={combined_score:.4f}{best_str} | {label_str}{shift_delta_str}", flush=True)
     
     # Minimize negative score
     return -combined_score
@@ -480,9 +435,6 @@ def load_cv_ceiling_weights(cv_results_path, classifier_name, label_types):
             # Add small epsilon to avoid zero weights
             weight = max(abs(score), 0.01)
             
-            # Square the weight to emphasize high-performing labels even more
-            weight = weight ** 2
-            
             weights[label_name] = weight
         
         print(f"  Loaded CV ceiling weights for {classifier_name}:", flush=True)
@@ -496,29 +448,118 @@ def load_cv_ceiling_weights(cv_results_path, classifier_name, label_types):
         print(f"  Using uniform weights", flush=True)
         return {k: 1.0 for k in label_types.keys()}
 
+def _optimize_bayesian(initial_shifts, initial_scales, optimize_scale, bounds,
+                       X_train, X_test, labels_train, labels_test, label_types,
+                       weights, classifier, trained_models, temperature, n_genes):
+    """
+    Bayesian Optimization via Optuna's TPE sampler.
+
+    Builds a probabilistic surrogate of the objective and samples where
+    improvement is most likely, minimizing expensive function evaluations.
+    Returns a scipy-style result object for compatibility.
+    """
+    try:
+        import optuna
+    except ImportError:
+        raise ImportError(
+            "Bayesian optimization requires optuna. Install with: pip install optuna"
+        )
+
+    # Silence Optuna's per-trial logging (we print our own progress)
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    # Tight search bounds: ±20% of |initial| (min 0.5) for fine-tuning
+    # The initial point is already a good estimate (mean-alignment or Bayesian shifts),
+    # so we don't need to explore wildly — just refine.
+    shift_margin = np.maximum(np.abs(initial_shifts) * 0.2, 0.5)
+
+    iteration_counter = {'count': 0}
+
+    def objective(trial):
+        shifts = np.array([
+            trial.suggest_float(f"shift_{i}",
+                                initial_shifts[i] - shift_margin[i],
+                                initial_shifts[i] + shift_margin[i])
+            for i in range(n_genes)
+        ])
+
+        if optimize_scale:
+            scales = np.array([
+                trial.suggest_float(f"scale_{i}", 0.5, 2.0, log=True)
+                for i in range(n_genes)
+            ])
+            params = np.concatenate([shifts, scales])
+        else:
+            params = shifts
+
+        return multi_label_objective(
+            params, X_train, X_test, labels_train, labels_test, label_types,
+            optimize_scale, weights, iteration_counter, classifier, trained_models,
+            temperature
+        )
+
+    # Seed the sampler with the initial guess as the first trial
+    n_startup = max(20, n_genes)  # enough random trials before TPE kicks in
+    sampler = optuna.samplers.TPESampler(seed=42, n_startup_trials=n_startup)
+    study = optuna.create_study(direction="minimize", sampler=sampler)
+
+    # Enqueue the initial point so it's evaluated first
+    init_params = {f"shift_{i}": float(initial_shifts[i]) for i in range(n_genes)}
+    if optimize_scale:
+        init_params.update({f"scale_{i}": float(initial_scales[i]) for i in range(n_genes)})
+    study.enqueue_trial(init_params)
+
+    n_trials = max(4000, n_genes * 10)
+    print(f"  Bayesian optimization: {n_trials} trials "
+          f"({n_startup} startup + {n_trials - n_startup} TPE)", flush=True)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    # Extract best parameters
+    best = study.best_trial
+    best_shifts = np.array([best.params[f"shift_{i}"] for i in range(n_genes)])
+    if optimize_scale:
+        best_scales = np.array([best.params[f"scale_{i}"] for i in range(n_genes)])
+        best_x = np.concatenate([best_shifts, best_scales])
+    else:
+        best_x = best_shifts
+
+    # Return scipy-compatible result object
+    class BayesianResult:
+        def __init__(self):
+            self.x = best_x
+            self.fun = best.value
+            self.success = True
+            self.message = (f"Bayesian optimization completed: "
+                            f"{len(study.trials)} trials, best value {best.value:.6f}")
+            self.nit = len(study.trials)
+            self.nfev = len(study.trials)
+
+    return BayesianResult()
+
 
 def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
                                label_types, optimize_scale=True, weights=None,
                                method='direct', classifier='histgradient', cv_results_path=None,
-                               temperature=10.0):
+                               temperature=10.0, optimizer='Nelder-Mead'):
     """
     Find optimal shift/scale parameters for multi-label alignment.
-    
+
     Args:
-        method: 'direct' (optimize with specified classifier) or 
+        method: 'direct' (optimize with specified classifier) or
                 'closed_form' (linear closed-form solution)
         classifier: Classifier to use for optimization ('histgradient', 'elasticnet', 'logistic', 'randomforest')
         cv_results_path: Path to CV ceiling results CSV for weight calculation
         temperature: Temperature for sigmoid sharpening in soft MCC (higher = sharper)
+        optimizer: Optimization algorithm: 'Nelder-Mead' or 'Bayesian'
     """
     n_genes = X_train.shape[1]
-    
+
     if method == 'closed_form':
         return find_closed_form_alignment(
             X_train, X_test, labels_train, labels_test,
             label_types, optimize_scale, weights
         )
-    
+
     # Load CV ceiling-based weights if available and no weights provided
     if weights is None and cv_results_path is not None:
         # Map classifier names
@@ -530,11 +571,11 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         }
         classifier_display_name = classifier_name_map.get(classifier, classifier)
         weights = load_cv_ceiling_weights(cv_results_path, classifier_display_name, label_types)
-    
+
     # Direct optimization method (original)
     # Initialize shifts to align means (simple baseline)
     mean_alignment_shifts = np.nanmean(X_test, axis=0) - np.nanmean(X_train, axis=0)
-    
+
     # Try to load Bayesian effective shifts as better initialization
     try:
         import polars as pl
@@ -549,59 +590,88 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
     except:
         initial_shifts = mean_alignment_shifts
         print(f"  Using mean alignment for initialization (Bayesian shifts not available)")
-    
+
     initial_scales = np.ones(n_genes)
-    
+
     if optimize_scale:
         initial_params = np.concatenate([initial_shifts, initial_scales])
         bounds = [(None, None)] * n_genes + [(0.01, 100)] * n_genes
     else:
         initial_params = initial_shifts
         bounds = [(None, None)] * n_genes
-    
+
     print(f"  Initial shifts: {initial_shifts[:5]}", flush=True)
     if optimize_scale:
         print(f"  Initial scales: {initial_scales[:5]}", flush=True)
     else:
         print(f"  Scales fixed to 1.0 (shift-only optimization)", flush=True)
     print(f"  Optimization classifier: {classifier}", flush=True)
+    print(f"  Optimizer: {optimizer}", flush=True)
     print(f"  Soft MCC temperature: {temperature} (higher = sharper decision boundary)", flush=True)
-    
+
     # Pre-train classifiers for all labels (HUGE speedup!)
     print("  Pre-training classifiers for all labels...", flush=True)
     trained_models = train_classifiers_for_labels(X_train, labels_train, label_types, classifier)
     print(f"  Trained {len([m for m in trained_models.values() if m is not None])} classifiers", flush=True)
-    
+
     # Optimize
     print("  Optimizing parameters across all labels...", flush=True)
-    iteration_counter = {'count': 0}
-    
-    result = minimize(
-        multi_label_objective,
-        initial_params,
-        args=(X_train, X_test, labels_train, labels_test, label_types, 
-              optimize_scale, weights, iteration_counter, classifier, trained_models, temperature),
-        method='L-BFGS-B',
-        bounds=bounds,
-        options={'maxiter': 500, 'ftol': 1e-6, 'gtol': 1e-5}
-    )
-    
+    iteration_counter = {'count': 0, 'initial_shifts': initial_shifts.copy()}
+
+    if optimizer == 'Bayesian':
+        result = _optimize_bayesian(
+            initial_shifts, initial_scales, optimize_scale, bounds,
+            X_train, X_test, labels_train, labels_test, label_types,
+            weights, classifier, trained_models, temperature, n_genes
+        )
+    else:
+        # Nelder-Mead: derivative-free simplex method
+        minimize_kwargs = {
+            'method': 'Nelder-Mead',
+            'options': {
+                'maxiter': 500,
+                'xatol': 1e-4, 'fatol': 1e-6, 'adaptive': True
+            },
+        }
+
+        result = minimize(
+            multi_label_objective,
+            initial_params,
+            args=(X_train, X_test, labels_train, labels_test, label_types,
+                  optimize_scale, weights, iteration_counter, classifier, trained_models, temperature),
+            **minimize_kwargs
+        )
+
     print(f"  Optimization result: {result.message}", flush=True)
     print(f"  Success: {result.success}", flush=True)
     print(f"  Number of iterations: {result.nit}", flush=True)
     print(f"  Number of function evaluations: {result.nfev}", flush=True)
-    
+
     if optimize_scale:
         optimal_shifts = result.x[:n_genes]
         optimal_scales = result.x[n_genes:]
     else:
         optimal_shifts = result.x
         optimal_scales = np.ones(n_genes)
-    
+
+    # Shift/scale delta summary
+    shift_delta = optimal_shifts - initial_shifts
+    shift_l2 = np.sqrt(np.sum(shift_delta**2))
+    n_shifts_moved = np.sum(np.abs(shift_delta) > 1e-4)
+    print(f"  Shift delta L2 norm: {shift_l2:.6f} ({n_shifts_moved}/{n_genes} genes moved >1e-4)", flush=True)
+    if n_shifts_moved > 0:
+        top_movers = np.argsort(np.abs(shift_delta))[::-1][:5]
+        print(f"  Top shift changes: {[(i, f'{shift_delta[i]:+.4f}') for i in top_movers]}", flush=True)
+    if optimize_scale:
+        scale_delta = optimal_scales - initial_scales
+        scale_l2 = np.sqrt(np.sum(scale_delta**2))
+        n_scales_moved = np.sum(np.abs(scale_delta) > 1e-4)
+        print(f"  Scale delta L2 norm: {scale_l2:.6f} ({n_scales_moved}/{n_genes} genes moved >1e-4)", flush=True)
+
     print(f"  Optimal shifts: {optimal_shifts[:5]}", flush=True)
     print(f"  Optimal scales: {optimal_scales[:5]}", flush=True)
     print(f"  Final loss: {result.fun:.4f}", flush=True)
-    
+
     return optimal_shifts, optimal_scales, result
 
 
@@ -768,6 +838,11 @@ def main():
                        help="Classifiers to use for evaluation")
     parser.add_argument("--temperature", type=float, default=10.0,
                        help="Temperature for sigmoid sharpening in soft MCC (higher = sharper, closer to hard threshold). Default: 10.0")
+    parser.add_argument("--optimizer", default="Nelder-Mead",
+                       choices=['Nelder-Mead', 'Bayesian'],
+                       help="Optimization algorithm for direct method. "
+                            "Nelder-Mead: derivative-free simplex (default), "
+                            "Bayesian: Optuna TPE surrogate model")
     parser.add_argument("--output-dir", required=True)
     
     args = parser.parse_args()
@@ -938,7 +1013,7 @@ def main():
         X_train, X_test_unadjusted, labels_train, labels_test,
         label_types, optimize_scale=not args.shift_only, method='direct',
         classifier=args.training_classifier, cv_results_path=cv_results_path,
-        temperature=args.temperature
+        temperature=args.temperature, optimizer=args.optimizer
     )
     
     X_test_dba = (X_test_unadjusted - shifts_dba) / scales_dba
@@ -961,6 +1036,10 @@ def main():
     adjusted_df.write_csv(output_dir / f"test_genes_dba_{args.training_classifier}.csv")
     print(f"    ✓ Saved: test_genes_dba_{args.training_classifier}.csv", flush=True)
     
+    # Also save with optimizer-specific name for optimizer comparison
+    adjusted_df.write_csv(output_dir / f"test_genes_dba_{args.optimizer}.csv")
+    print(f"    ✓ Saved: test_genes_dba_{args.optimizer}.csv", flush=True)
+    
     # Save parameters
     print("  Saving parameters...", flush=True)
     params_data = {
@@ -981,6 +1060,10 @@ def main():
     # Also save with classifier-specific name for Snakemake compatibility
     params_df.write_csv(output_dir / f"dba_parameters_{args.training_classifier}.csv")
     print(f"    ✓ Saved: dba_parameters_{args.training_classifier}.csv", flush=True)
+    
+    # Also save with optimizer-specific name for optimizer comparison
+    params_df.write_csv(output_dir / f"dba_parameters_{args.optimizer}.csv")
+    print(f"    ✓ Saved: dba_parameters_{args.optimizer}.csv", flush=True)
     
     # Create comparison table
     print("\n" + "="*60, flush=True)

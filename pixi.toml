@@ -44,6 +44,7 @@ pandas = "*"
 polars = "*"
 pyarrow = "*"
 scikit-learn = "*"
+optuna = "*"
 matplotlib = "*"
 seaborn = "*"
 

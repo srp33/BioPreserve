@@ -36,6 +36,9 @@ CLASSIFIER_NAMES = {
 # DBA training classifiers (used for oracle adjustment methods)
 DBA_CLASSIFIERS = ['histgradient', 'elasticnet', 'logistic', 'randomforest']
 
+# DBA optimizers for comparison
+DBA_OPTIMIZERS = ['Bayesian']
+
 # Rule order: specific multi-label DBA rules should be preferred over generic evaluate_adjuster_label
 ruleorder: evaluate_multi_label_dba > evaluate_adjuster_label
 ruleorder: evaluate_dba_trained > evaluate_adjuster_label
@@ -70,35 +73,57 @@ rule all:
             training_classifier=DBA_CLASSIFIERS,
             label=METADATA_LABELS
         ),
+        # DBA optimizer comparison outputs
+        expand(
+            f"{OUTPUT_FOLDER}/dba_optimizer_comparison_{{shift_type}}/test_genes_dba_{{optimizer}}.csv",
+            shift_type=['shift_only', 'shift_scale'],
+            optimizer=DBA_OPTIMIZERS
+        ),
 
 
-rule test_set_cv:
+rule test_set_cv_per_classifier_label:
     input:
         test_genes="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
         test_metadata=X_TEST
     output:
-        results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv"
+        results=f"{OUTPUT_FOLDER}/test_set_cv_parts/{{classifier}}__{{label}}.csv"
     params:
         continuous_metadata=" ".join(config["continuous_metadata"]),
-        classifiers=" ".join([f'"{name}"' for name in CLASSIFIER_NAMES.values()]),
+        classifier_name=lambda wildcards: f'"{CLASSIFIER_NAMES[wildcards.classifier]}"',
         n_splits=config.get("cv_n_splits", 5)
     resources:
-        mem_mb=8000,
+        mem_mb=4000,
         runtime=120
-    threads: 4
+    threads: 1
     log:
-        "logs/test_set_cv.log"
+        "logs/test_set_cv_{classifier}_{label}.log"
     shell:
         """
         python scripts/test_set_cv.py \
             --genes {input.test_genes} \
             --metadata {input.test_metadata} \
             --continuous-metadata {params.continuous_metadata} \
-            --classifiers {params.classifiers} \
+            --classifiers {params.classifier_name} \
+            --labels {wildcards.label} \
             --n-splits {params.n_splits} \
             --output {output.results} \
             &> {log}
         """
+
+
+rule test_set_cv_merge:
+    input:
+        parts=expand(
+            f"{OUTPUT_FOLDER}/test_set_cv_parts/{{classifier}}__{{label}}.csv",
+            classifier=CLASSIFIERS,
+            label=METADATA_LABELS
+        )
+    output:
+        results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv"
+    run:
+        import pandas as pd
+        dfs = [pd.read_csv(f) for f in input.parts]
+        pd.concat(dfs, ignore_index=True).to_csv(output.results, index=False)
 
 
 rule create_effective_shift_only:
@@ -642,7 +667,7 @@ rule dba_train_classifier:
     resources:
         mem_mb=8000,
         runtime=lambda wildcards: 120 if wildcards.shift_type == "shift_only" else 180
-    threads: lambda wildcards: 8 if wildcards.classifier == "randomforest" else 1
+    threads: lambda wildcards: 24 if wildcards.classifier == "randomforest" else 1
     log:
         "logs/dba_train_{classifier}_{shift_type}.log"
     shell:
@@ -655,6 +680,46 @@ rule dba_train_classifier:
             --test-metadata {input.test_metadata} \
             --continuous-metadata {params.continuous_metadata} \
             --training-classifier {wildcards.classifier} \
+            {params.shift_only_flag} \
+            --output-dir {params.output_dir} \
+            &> {log}
+        """
+
+
+# DBA Optimizer Comparison: train with histgradient but vary the optimizer
+rule dba_train_optimizer:
+    input:
+        train_genes="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_train_selected_genes.csv",
+        test_genes_unadjusted="adjusters/unadjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        test_genes_bayesian="adjusters/adjusted_bayesian_shift_scale_2studies_test_metabric_test_selected_genes.csv",
+        train_metadata=X_TRAIN,
+        test_metadata=X_TEST,
+    output:
+        adjusted=f"{OUTPUT_FOLDER}/dba_optimizer_comparison_{{shift_type}}/test_genes_dba_{{optimizer}}.csv",
+        parameters=f"{OUTPUT_FOLDER}/dba_optimizer_comparison_{{shift_type}}/dba_parameters_{{optimizer}}.csv",
+    params:
+        continuous_metadata=" ".join(config["continuous_metadata"]),
+        output_dir=f"{OUTPUT_FOLDER}/dba_optimizer_comparison_{{shift_type}}",
+        shift_only_flag=lambda wildcards: "--shift-only" if wildcards.shift_type == "shift_only" else ""
+    resources:
+        mem_mb=8000,
+        runtime=lambda wildcards: 360 if wildcards.optimizer == "Bayesian" else 180
+    threads: 1
+    log:
+        "logs/dba_optimizer_{optimizer}_{shift_type}.log"
+    wildcard_constraints:
+        optimizer="Bayesian"
+    shell:
+        """
+        python scripts/multi_label_dba.py \
+            --train-genes {input.train_genes} \
+            --test-genes-unadjusted {input.test_genes_unadjusted} \
+            --test-genes-bayesian {input.test_genes_bayesian} \
+            --train-metadata {input.train_metadata} \
+            --test-metadata {input.test_metadata} \
+            --continuous-metadata {params.continuous_metadata} \
+            --training-classifier histgradient \
+            --optimizer {wildcards.optimizer} \
             {params.shift_only_flag} \
             --output-dir {params.output_dir} \
             &> {log}

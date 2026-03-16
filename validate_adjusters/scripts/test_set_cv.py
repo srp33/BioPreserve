@@ -44,11 +44,12 @@ def get_regressor(classifier_name, random_state=42):
         raise ValueError(f"Unknown regressor: {classifier_name}")
 
 
-def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_names, n_splits=5, random_state=42):
+def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_names, n_splits=5, random_state=42, label_filter=None):
     """Run k-fold CV on test set to get performance ceiling per classifier.
     
     Args:
         n_splits: Number of folds. Use -1 or 0 for Leave-One-Out CV.
+        label_filter: If provided, only evaluate these metadata columns.
     """
     
     # Load gene expression and metadata
@@ -64,6 +65,8 @@ def run_cv_on_test_set(genes_path, metadata_path, continuous_cols, classifier_na
     
     # Separate features and metadata
     metadata_cols = [col for col in df.columns if col.startswith('meta_')]
+    if label_filter:
+        metadata_cols = [col for col in metadata_cols if col in label_filter]
     gene_cols = [col for col in df.columns if not col.startswith('meta_')]
     
     X = df.select(gene_cols).to_numpy()
@@ -259,6 +262,12 @@ def main():
         help="Number of CV folds (default: 5)"
     )
     parser.add_argument(
+        "--labels",
+        nargs="+",
+        default=None,
+        help="Specific metadata labels to evaluate (default: all meta_ columns)"
+    )
+    parser.add_argument(
         "--output",
         help="Optional output CSV file for results"
     )
@@ -278,7 +287,8 @@ def main():
         args.continuous_metadata,
         args.classifiers,
         args.n_splits,
-        args.random_state
+        args.random_state,
+        args.labels
     )
     
     # Print summary
