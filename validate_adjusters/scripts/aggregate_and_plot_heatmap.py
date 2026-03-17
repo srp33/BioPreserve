@@ -87,7 +87,7 @@ def format_label_name(label):
     return label_map.get(label, label)
 
 
-def create_heatmap(results_df, classifier_name, cv_results_df, output_path):
+def create_heatmap(results_df, classifier_name, cv_results_df, output_path, output_txt_path=None):
     """Create heatmap from results DataFrame."""
     # Format adjuster names
     results_df = results_df.with_columns(
@@ -177,6 +177,38 @@ def create_heatmap(results_df, classifier_name, cv_results_df, output_path):
     plt.close()
     
     print(f"  Saved heatmap to: {output_path}")
+    
+    # Save text table if path provided
+    if output_txt_path:
+        with open(output_txt_path, 'w') as f:
+            f.write(f"Cross-Dataset Classification Performance: {classifier_name}\n")
+            f.write(f"(MCC for categorical, R² for continuous metadata)\n")
+            f.write("=" * 120 + "\n\n")
+            
+            # Get column widths
+            col_width = 10
+            method_width = max(35, max(len(str(idx)) for idx in heatmap_df.index) + 2)
+            
+            # Header
+            header = f"{'Method':<{method_width}}"
+            for col in heatmap_df.columns:
+                header += f"{col:>{col_width}}"
+            f.write(header + "\n")
+            f.write("-" * len(header) + "\n")
+            
+            # Data rows
+            for idx, row in heatmap_df.iterrows():
+                line = f"{idx:<{method_width}}"
+                for val in row:
+                    if np.isnan(val):
+                        line += f"{'NaN':>{col_width}}"
+                    else:
+                        line += f"{val:>{col_width}.2f}"
+                f.write(line + "\n")
+            
+            f.write("\n")
+        
+        print(f"  Saved text table to: {output_txt_path}")
 
 
 def main():
@@ -193,6 +225,8 @@ def main():
                        help="Output path for heatmap PNG")
     parser.add_argument("--output-csv", required=True,
                        help="Output path for aggregated CSV")
+    parser.add_argument("--output-txt", required=False,
+                       help="Output path for text table (optional)")
     
     args = parser.parse_args()
     
@@ -239,7 +273,8 @@ def main():
         print(f"  Loaded CV results from: {args.cv_results}")
     
     # Create heatmap
-    create_heatmap(results_df, args.classifier, cv_results_df, args.output_heatmap)
+    output_txt = getattr(args, 'output_txt', None)
+    create_heatmap(results_df, args.classifier, cv_results_df, args.output_heatmap, output_txt)
     
     print(f"  Complete!")
 

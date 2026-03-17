@@ -52,16 +52,17 @@ def train_classifiers_for_labels(X_train, labels_train, label_types, classifier=
             if classifier == 'histgradient':
                 clf = HistGradientBoostingClassifier(random_state=42, max_iter=50, max_depth=5)
             elif classifier == 'elasticnet':
-                scaler = StandardScaler()
-                X_train_filtered = scaler.fit_transform(X_train_filtered)
+                # No StandardScaler for DBA optimization - the adjustment (shift/scale)
+                # is doing the alignment work. Using StandardScaler creates a mismatch
+                # when we apply scale adjustments because the scaler's mean/std were
+                # computed on X_train, not on X_train/scale.
                 clf = SGDClassifier(
                     loss='log_loss', penalty='elasticnet',
                     alpha=0.0001, l1_ratio=0.15,
                     max_iter=1000, random_state=42, tol=1e-3
                 )
             elif classifier == 'logistic':
-                scaler = StandardScaler()
-                X_train_filtered = scaler.fit_transform(X_train_filtered)
+                # No StandardScaler - same reasoning as elasticnet
                 clf = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
             elif classifier == 'randomforest':
                 from sklearn.ensemble import RandomForestClassifier
@@ -72,9 +73,7 @@ def train_classifiers_for_labels(X_train, labels_train, label_types, classifier=
             if classifier == 'histgradient':
                 clf = HistGradientBoostingRegressor(random_state=42, max_iter=50, max_depth=5)
             else:
-                # Use Ridge for all other methods
-                scaler = StandardScaler()
-                X_train_filtered = scaler.fit_transform(X_train_filtered)
+                # No StandardScaler for Ridge - same reasoning as classification
                 clf = Ridge(alpha=1.0, random_state=42)
         
         clf.fit(X_train_filtered, y_train_filtered)
@@ -153,7 +152,9 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temp
     Evaluate using a pre-trained classifier.
 
     During optimization (use_proba=True):
-      - Linear models: log-loss (classification) or negative MSE (regression)
+      - Linear models (classification): soft MCC via sigmoid-sharpened probabilities
+        (differentiable, bounded in [-1, 1], same scale as hard MCC)
+      - Linear models (regression): R² (bounded, comparable scale to MCC)
       - Tree-based models: hard MCC / R² (no gradient needed for Nelder-Mead / Bayesian)
 
     For final evaluation (use_proba=False): hard MCC / R².
@@ -163,7 +164,7 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temp
         y_test: Test labels
         trained_model: Dict with 'clf', 'scaler', 'label_type'
         use_proba: If True, use smooth loss for optimization (linear models only)
-        temperature: Unused, kept for API compatibility
+        temperature: Temperature for soft MCC sigmoid sharpening (higher = closer to hard MCC)
     """
     if trained_model is None:
         return np.nan
@@ -180,7 +181,7 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temp
         if len(np.unique(y_test_filtered)) < 2:
             return np.nan
 
-    # For optimization: use smooth loss for linear models, hard metrics for trees
+    # For optimization: use smooth surrogates for linear models, hard metrics for trees
     if use_proba:
         tree_based = _is_tree_based(clf)
 
@@ -191,16 +192,20 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temp
                 y_pred = clf.predict(X_pred)
                 return matthews_corrcoef(y_test_filtered, y_pred)
             else:
-                # Linear models: log-loss is already smooth
+                # Linear models: soft MCC — differentiable and on the same [-1, 1]
+                # scale as hard MCC, avoiding the scale mismatch that log-loss causes
                 X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
                 try:
                     y_proba = clf.predict_proba(X_pred)
-                    eps = 1e-15
-                    y_proba = np.clip(y_proba, eps, 1 - eps)
-                    p_true = y_proba[np.arange(len(y_test_filtered)), y_test_filtered.astype(int)]
-                    return -(-np.mean(np.log(p_true)))  # negative log-loss
+                    # For binary: use probability of class 1
+                    if y_proba.shape[1] == 2:
+                        return soft_mcc(y_test_filtered, y_proba[:, 1], temperature=temperature)
+                    else:
+                        # Multiclass: fall back to hard MCC
+                        y_pred = clf.predict(X_pred)
+                        return matthews_corrcoef(y_test_filtered, y_pred)
                 except Exception as e:
-                    print(f"    Warning: log-loss failed, falling back to hard predictions: {e}")
+                    print(f"    Warning: soft MCC failed, falling back to hard predictions: {e}")
 
         if label_type == 'regression':
             if tree_based:
@@ -209,9 +214,10 @@ def evaluate_with_pretrained(X_test, y_test, trained_model, use_proba=True, temp
                 y_pred = clf.predict(X_pred)
                 return r2_score(y_test_filtered, y_pred)
             else:
+                # Linear models: R² is already smooth and bounded, comparable to MCC scale
                 X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
                 y_pred = clf.predict(X_pred)
-                return -np.mean((y_test_filtered - y_pred) ** 2)
+                return r2_score(y_test_filtered, y_pred)
 
     # For final evaluation: use hard metrics
     X_pred = scaler.transform(X_test_filtered) if scaler is not None else X_test_filtered
@@ -236,23 +242,17 @@ def evaluate_classification(X_train, X_test, y_train, y_test, classifier='histgr
     if len(np.unique(y_train_filtered)) < 2 or len(np.unique(y_test_filtered)) < 2:
         return np.nan
     
-    # Select classifier
+    # Select classifier - no StandardScaler for DBA optimization
+    # The adjustment (shift/scale) is doing the alignment work
     if classifier == 'histgradient':
         clf = HistGradientBoostingClassifier(random_state=42, max_iter=50, max_depth=5)
     elif classifier == 'elasticnet':
-        # Standardize for linear models
-        scaler = StandardScaler()
-        X_train_filtered = scaler.fit_transform(X_train_filtered)
-        X_test_filtered = scaler.transform(X_test_filtered)
         clf = SGDClassifier(
             loss='log_loss', penalty='elasticnet',
             alpha=0.0001, l1_ratio=0.15,
             max_iter=1000, random_state=42, tol=1e-3
         )
     elif classifier == 'logistic':
-        scaler = StandardScaler()
-        X_train_filtered = scaler.fit_transform(X_train_filtered)
-        X_test_filtered = scaler.transform(X_test_filtered)
         clf = LogisticRegression(C=1.0, max_iter=1000, random_state=42)
     elif classifier == 'randomforest':
         from sklearn.ensemble import RandomForestClassifier
@@ -279,14 +279,10 @@ def evaluate_regression(X_train, X_test, y_train, y_test, regressor='histgradien
     if len(X_train_filtered) < 10 or len(X_test_filtered) < 10:
         return np.nan
     
-    # Select regressor
+    # Select regressor - no StandardScaler for DBA optimization
     if regressor == 'histgradient':
         reg = HistGradientBoostingRegressor(random_state=42, max_iter=50, max_depth=5)
     elif regressor in ['elasticnet', 'logistic', 'randomforest']:
-        # Use Ridge for all linear-based methods
-        scaler = StandardScaler()
-        X_train_filtered = scaler.fit_transform(X_train_filtered)
-        X_test_filtered = scaler.transform(X_test_filtered)
         reg = Ridge(alpha=1.0, random_state=42)
     else:
         raise ValueError(f"Unknown regressor: {regressor}")
@@ -540,7 +536,7 @@ def _optimize_bayesian(initial_shifts, initial_scales, optimize_scale, bounds,
 def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
                                label_types, optimize_scale=True, weights=None,
                                method='direct', classifier='histgradient', cv_results_path=None,
-                               temperature=10.0, optimizer='Nelder-Mead'):
+                               temperature=10.0, optimizer='auto'):
     """
     Find optimal shift/scale parameters for multi-label alignment.
 
@@ -550,7 +546,7 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
         classifier: Classifier to use for optimization ('histgradient', 'elasticnet', 'logistic', 'randomforest')
         cv_results_path: Path to CV ceiling results CSV for weight calculation
         temperature: Temperature for sigmoid sharpening in soft MCC (higher = sharper)
-        optimizer: Optimization algorithm: 'Nelder-Mead' or 'Bayesian'
+        optimizer: 'auto' (L-BFGS-B for linear, Bayesian for trees), 'Nelder-Mead', or 'Bayesian'
     """
     n_genes = X_train.shape[1]
 
@@ -560,17 +556,13 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
             label_types, optimize_scale, weights
         )
 
-    # Load CV ceiling-based weights if available and no weights provided
-    if weights is None and cv_results_path is not None:
-        # Map classifier names
-        classifier_name_map = {
-            'histgradient': 'Gradient Boosting',
-            'elasticnet': 'ElasticNet (l1=0.15)',
-            'logistic': 'Logistic (L2)',
-            'randomforest': 'Random Forest'
-        }
-        classifier_display_name = classifier_name_map.get(classifier, classifier)
-        weights = load_cv_ceiling_weights(cv_results_path, classifier_display_name, label_types)
+    # Use uniform weights - CV ceiling weights caused the optimizer to sacrifice
+    # low-ceiling labels (like age) to improve high-ceiling labels (ER, HER2).
+    # Uniform weights treat all labels fairly, similar to how unsupervised methods
+    # like Log-ComBat don't favor any particular downstream task.
+    if weights is None:
+        weights = {k: 1.0 for k in label_types.keys()}
+        print(f"  Using uniform weights for all {len(weights)} labels", flush=True)
 
     # Direct optimization method (original)
     # Initialize shifts to align means (simple baseline)
@@ -593,9 +585,16 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
 
     initial_scales = np.ones(n_genes)
 
+    # Note: We previously disabled scale optimization for linear models due to
+    # StandardScaler interaction issues. Now using uniform weights and allowing
+    # scale optimization to see if it helps.
+
     if optimize_scale:
         initial_params = np.concatenate([initial_shifts, initial_scales])
-        bounds = [(None, None)] * n_genes + [(0.01, 100)] * n_genes
+        # Tight scale bounds: [0.5, 2.0] prevents extreme distortion that causes
+        # the pre-trained scaler+classifier to produce unreliable predictions.
+        # The Bayesian optimizer already uses [0.5, 2.0]; match it for L-BFGS-B.
+        bounds = [(None, None)] * n_genes + [(0.5, 2.0)] * n_genes
     else:
         initial_params = initial_shifts
         bounds = [(None, None)] * n_genes
@@ -606,6 +605,16 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
     else:
         print(f"  Scales fixed to 1.0 (shift-only optimization)", flush=True)
     print(f"  Optimization classifier: {classifier}", flush=True)
+    
+    # Auto-select optimizer based on classifier type
+    if optimizer == 'auto':
+        if classifier in ('elasticnet', 'logistic'):
+            optimizer = 'L-BFGS-B'
+            print(f"  Auto-selected optimizer: L-BFGS-B (linear model, smooth loss surface)", flush=True)
+        else:
+            optimizer = 'Bayesian'
+            print(f"  Auto-selected optimizer: Bayesian (tree-based model, non-smooth loss)", flush=True)
+    
     print(f"  Optimizer: {optimizer}", flush=True)
     print(f"  Soft MCC temperature: {temperature} (higher = sharper decision boundary)", flush=True)
 
@@ -623,6 +632,17 @@ def find_multi_label_alignment(X_train, X_test, labels_train, labels_test,
             initial_shifts, initial_scales, optimize_scale, bounds,
             X_train, X_test, labels_train, labels_test, label_types,
             weights, classifier, trained_models, temperature, n_genes
+        )
+    elif optimizer == 'L-BFGS-B':
+        # Gradient-based optimizer for linear models with smooth loss
+        result = minimize(
+            multi_label_objective,
+            initial_params,
+            args=(X_train, X_test, labels_train, labels_test, label_types,
+                  optimize_scale, weights, iteration_counter, classifier, trained_models, temperature),
+            method='L-BFGS-B',
+            bounds=bounds,
+            options={'maxiter': 500, 'ftol': 1e-6, 'gtol': 1e-5}
         )
     else:
         # Nelder-Mead: derivative-free simplex method
@@ -838,11 +858,14 @@ def main():
                        help="Classifiers to use for evaluation")
     parser.add_argument("--temperature", type=float, default=10.0,
                        help="Temperature for sigmoid sharpening in soft MCC (higher = sharper, closer to hard threshold). Default: 10.0")
-    parser.add_argument("--optimizer", default="Nelder-Mead",
-                       choices=['Nelder-Mead', 'Bayesian'],
+    parser.add_argument("--optimizer", default="auto",
+                       choices=['auto', 'L-BFGS-B', 'Nelder-Mead', 'Bayesian'],
                        help="Optimization algorithm for direct method. "
-                            "Nelder-Mead: derivative-free simplex (default), "
+                            "auto: L-BFGS-B for linear models, Bayesian for trees (default), "
+                            "Nelder-Mead: derivative-free simplex, "
                             "Bayesian: Optuna TPE surrogate model")
+    parser.add_argument("--training-only", action="store_true",
+                       help="Only write classifier-specific output files (for parallel Snakemake jobs)")
     parser.add_argument("--output-dir", required=True)
     
     args = parser.parse_args()
@@ -1029,16 +1052,20 @@ def main():
     adjusted_df = pl.DataFrame({
         gene: X_test_dba[:, i] for i, gene in enumerate(common_genes)
     })
-    adjusted_df.write_csv(output_dir / "test_genes_multi_label_dba_direct.csv")
-    print(f"    ✓ Saved: test_genes_multi_label_dba_direct.csv", flush=True)
     
-    # Also save with classifier-specific name for Snakemake compatibility
+    # Generic outputs (only write if not in training-only mode to avoid race conditions)
+    if not args.training_only:
+        adjusted_df.write_csv(output_dir / "test_genes_multi_label_dba_direct.csv")
+        print(f"    ✓ Saved: test_genes_multi_label_dba_direct.csv", flush=True)
+    
+    # Classifier-specific name (always write for Snakemake compatibility)
     adjusted_df.write_csv(output_dir / f"test_genes_dba_{args.training_classifier}.csv")
     print(f"    ✓ Saved: test_genes_dba_{args.training_classifier}.csv", flush=True)
     
-    # Also save with optimizer-specific name for optimizer comparison
-    adjusted_df.write_csv(output_dir / f"test_genes_dba_{args.optimizer}.csv")
-    print(f"    ✓ Saved: test_genes_dba_{args.optimizer}.csv", flush=True)
+    # Optimizer-specific name (only write if not in training-only mode)
+    if not args.training_only:
+        adjusted_df.write_csv(output_dir / f"test_genes_dba_{args.optimizer}.csv")
+        print(f"    ✓ Saved: test_genes_dba_{args.optimizer}.csv", flush=True)
     
     # Save parameters
     print("  Saving parameters...", flush=True)
@@ -1049,21 +1076,25 @@ def main():
     }
     
     # Add closed-form parameters if they were computed
-    if args.training_classifier == "histgradient":
+    if args.training_classifier == "histgradient" and not args.training_only:
         params_data['multi_label_dba_cf_shift'] = shifts_dba_cf
         params_data['multi_label_dba_cf_scale'] = scales_dba_cf
     
     params_df = pl.DataFrame(params_data)
-    params_df.write_csv(output_dir / "multi_label_dba_parameters.csv")
-    print(f"    ✓ Saved: multi_label_dba_parameters.csv", flush=True)
     
-    # Also save with classifier-specific name for Snakemake compatibility
+    # Generic outputs (only write if not in training-only mode)
+    if not args.training_only:
+        params_df.write_csv(output_dir / "multi_label_dba_parameters.csv")
+        print(f"    ✓ Saved: multi_label_dba_parameters.csv", flush=True)
+    
+    # Classifier-specific name (always write for Snakemake compatibility)
     params_df.write_csv(output_dir / f"dba_parameters_{args.training_classifier}.csv")
     print(f"    ✓ Saved: dba_parameters_{args.training_classifier}.csv", flush=True)
     
-    # Also save with optimizer-specific name for optimizer comparison
-    params_df.write_csv(output_dir / f"dba_parameters_{args.optimizer}.csv")
-    print(f"    ✓ Saved: dba_parameters_{args.optimizer}.csv", flush=True)
+    # Optimizer-specific name (only write if not in training-only mode)
+    if not args.training_only:
+        params_df.write_csv(output_dir / f"dba_parameters_{args.optimizer}.csv")
+        print(f"    ✓ Saved: dba_parameters_{args.optimizer}.csv", flush=True)
     
     # Create comparison table
     print("\n" + "="*60, flush=True)
@@ -1083,8 +1114,9 @@ def main():
             })
     
     comparison_df = pl.DataFrame(comparison_data)
-    comparison_df.write_csv(output_dir / "multi_label_comparison.csv")
-    print(f"  ✓ Saved: multi_label_comparison.csv", flush=True)
+    if not args.training_only:
+        comparison_df.write_csv(output_dir / "multi_label_comparison.csv")
+        print(f"  ✓ Saved: multi_label_comparison.csv", flush=True)
     
     # Print summary table
     print(f"\n{'Method':<30} {'Label':<25} {'Metric':<6} {'Score':>8}", flush=True)

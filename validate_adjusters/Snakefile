@@ -52,6 +52,7 @@ rule all:
         f"{OUTPUT_FOLDER}/oracle_analysis/adjustment_comparison.png",
         f"{OUTPUT_FOLDER}/debug_analysis/parameter_comparison.png",
         expand(f"{OUTPUT_FOLDER}/classifier_heatmaps/heatmap_{{classifier}}.png", classifier=CLASSIFIERS),
+        f"{OUTPUT_FOLDER}/classifier_heatmaps/heatmap_combined.png",
         f"{OUTPUT_FOLDER}/optimal_strategy.png",
         f"{OUTPUT_FOLDER}/dba_analysis/dba_comparison.png",
         f"{OUTPUT_FOLDER}/multi_label_dba_shift_only/multi_label_comparison.csv",
@@ -405,6 +406,7 @@ rule classifier_heatmaps:
     output:
         heatmap=f"{OUTPUT_FOLDER}/classifier_heatmaps/heatmap_{{classifier}}.png",
         csv=f"{OUTPUT_FOLDER}/classifier_heatmaps/results_{{classifier}}.csv",
+        txt=f"{OUTPUT_FOLDER}/classifier_heatmaps/results_{{classifier}}.txt",
     params:
         classifier_name=lambda wildcards: CLASSIFIER_NAMES[wildcards.classifier],
         results_dir=f"{OUTPUT_FOLDER}/classifier_results/{{classifier}}",
@@ -423,6 +425,31 @@ rule classifier_heatmaps:
             --cv-results {input.cv_results} \
             --output-heatmap {output.heatmap} \
             --output-csv {output.csv} \
+            --output-txt {output.txt} \
+            &> {log}
+        """
+
+
+rule combined_heatmap:
+    input:
+        csvs=expand(f"{OUTPUT_FOLDER}/classifier_heatmaps/results_{{classifier}}.csv", classifier=CLASSIFIERS),
+        cv_results=f"{OUTPUT_FOLDER}/test_set_cv_results.csv",
+    output:
+        heatmap=f"{OUTPUT_FOLDER}/classifier_heatmaps/heatmap_combined.png",
+        txt=f"{OUTPUT_FOLDER}/classifier_heatmaps/results_combined.txt",
+    resources:
+        mem_mb=4000,
+        runtime=10
+    threads: 1
+    log:
+        "logs/combined_heatmap.log"
+    shell:
+        """
+        python scripts/aggregate_across_classifiers.py \
+            --input-csvs {input.csvs} \
+            --cv-results {input.cv_results} \
+            --output-heatmap {output.heatmap} \
+            --output-txt {output.txt} \
             &> {log}
         """
 
@@ -688,6 +715,7 @@ rule dba_train_classifier:
             --test-metadata {input.test_metadata} \
             --continuous-metadata {params.continuous_metadata} \
             --training-classifier {wildcards.classifier} \
+            --training-only \
             {params.shift_only_flag} \
             --output-dir {params.output_dir} \
             &> {log}

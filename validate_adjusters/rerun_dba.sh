@@ -37,8 +37,8 @@ echo "Deleted. Running Snakemake..."
 pixi run snakemake \
     --scheduler-ilp-solver COIN_CMD \
     --executor slurm \
-    --default-resources slurm_account=srp33 slurm_partition="(auto)" runtime=60 \
-    --jobs 100 \
+    --default-resources slurm_account=srp33 slurm_partition="(auto)" runtime=180 \
+    --jobs 300 \
     --resources mem_mb=50000 runtime=1440 \
     --rerun-incomplete \
     --rerun-triggers mtime \
