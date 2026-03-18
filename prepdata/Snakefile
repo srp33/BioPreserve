@@ -8,6 +8,7 @@ DATA_DIR = config['data_directory']
 RAW_DOWNLOAD_DIR = DATA_DIR + "/raw_download"
 RAW_DIR = DATA_DIR + "/raw_data"
 GOLD_DIR = DATA_DIR + "/gold"
+COMBINED_DIR = DATA_DIR + "/all_combined"
 
 OSF_DATASETS = config["osf_datasets"]
 GDRIVE_DATASETS = config["gdrive_datasets"]
@@ -15,14 +16,31 @@ ALL_DATASETS = OSF_DATASETS + GDRIVE_DATASETS
 
 rule all:
     input: # FINAL files of prepdata
+        f"{COMBINED_DIR}/all_combined.csv"
+
+rule combine:
+    input: 
         expand(
             GOLD_DIR + "/{gse}/unadjusted.csv",
             gse=[g.lower() for g in OSF_DATASETS] # Changed here to only look for OSF datasets, can be configured to all
         )
+    output:
+        f"{COMBINED_DIR}/all_combined.csv"
+    resources: 
+        mem_mb=16000,
+        runtime=30
+    threads: 1
+    log: 
+        "logs/combine.log"
+    shell:
+        """
+        python combine_all.py --input-dir {GOLD_DIR} --output-file {output} > {log} 2>&1
+        """
 
 rule convert_raw_to_gold:
     input:
-        RAW_DIR
+        raw_dir = lambda wildcards: f"{RAW_DIR}/{wildcards.gse}",
+        organized = RAW_DIR
     output:
         GOLD_DIR + "/{gse}/unadjusted.csv"
     resources:
@@ -36,7 +54,7 @@ rule convert_raw_to_gold:
             --raw-dir {input} \
             --target-dir {GOLD_DIR} \
             --dataset {wildcards.gse} \
-            &> {log}
+            > {log} 2>&1
         """
 
 rule organize:
@@ -51,7 +69,7 @@ rule organize:
         python organize_downloaded_files.py \
             --raw-dir {input} \
             --target-dir {output} \
-            &> {log}
+            > {log} 2>&1
         """
 
 # rule download_gdrive:
@@ -68,7 +86,7 @@ rule organize:
 #             --raw-data-dir {RAW_DIR} \
 #             --verbose \
 #             --datasets {','.join(GDRIVE_DATASETS)} \
-#             &> {log}
+#             > {log} 2>&1
 #         """
 
 rule download_osf:
@@ -90,5 +108,5 @@ rule download_osf:
             --raw-data-dir {RAW_DIR} \
             --verbose \
             --datasets {params.datasets} \
-            &> {log}
+            > {log} 2>&1
         """

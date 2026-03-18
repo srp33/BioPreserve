@@ -35,7 +35,14 @@ python download_datasets.py --status
 
 ## Processing
 
-**Conversion**: `convert_raw_files.py` (main), `convert_to_h5.py` (HDF5), `create_smaller_csv.R` (R formats), `transpose_matrix.py`
+**Conversion**: `convert_raw_files.py` (main), `convert_to_h5.py` (HDF5), `create_smaller_csv.R` (R formats), `transpose_matrix.py`, `combine_all.py`
+
+The file convert_raw_files.py finds and reads each file's expression and metadata files, transposes if necessary, and identifies a column to use as sample ID. The sample ID column is set to the index and named 'meta_Sample_ID'. 
+
+Three metadata columns are standardized across all datasets, resulting in 'meta_er_status', 'meta_pr_status', and 'meta_her2_status', and their values are mapped to binary. All other metadata columns are prefixed with meta_, and the final results with expression and metadata columns are stored in gold/.
+
+combine_all.py creates a file that vertically concatenates each dataset, keeping only shared gene expression columns. Any missing value from unique metadata columns is filled in with NA. The meta_Sample_ID is returned to a columnn and meta_source is added as a new column, which preserves the dataset's GSE ID. 
+
 **Organization**: `organize_downloaded_files.py` for automated file structure
 
 ```bash

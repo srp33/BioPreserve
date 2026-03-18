@@ -9,6 +9,7 @@ core.*
 *.err
 .idea
 *.log
+prepdata/logs
 .pixi
 .nextflow
 .snakemake
