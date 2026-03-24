@@ -9,14 +9,73 @@ RAW_DOWNLOAD_DIR = DATA_DIR + "/raw_download"
 RAW_DIR = DATA_DIR + "/raw_data"
 GOLD_DIR = DATA_DIR + "/gold"
 COMBINED_DIR = DATA_DIR + "/all_combined"
+EXPLORE_DIR = DATA_DIR + "/metadata_exploration"
+PARQUET_FILE = COMBINED_DIR + "/all_combined.parquet"
+META_COLUMNS_FILE = EXPLORE_DIR + "/meta_columns.txt"
 
 OSF_DATASETS = config["osf_datasets"]
 GDRIVE_DATASETS = config["gdrive_datasets"]
 ALL_DATASETS = OSF_DATASETS + GDRIVE_DATASETS
 
+
+wildcard_constraints:
+    col = r"[^/]+"   # column names must not contain /
+
+
+def get_explore_targets(wildcards):
+    """Read the column list emitted by the checkpoint and return per-column flag files."""
+    cols_file = checkpoints.csv_to_parquet.get(**wildcards).output.columns
+    cols = Path(cols_file).read_text().strip().split("\n")
+    return expand(EXPLORE_DIR + "/{col}/done.flag", col=cols)
+
+
 rule all:
     input: # FINAL files of prepdata
-        f"{COMBINED_DIR}/all_combined.csv"
+        f"{COMBINED_DIR}/all_combined.csv",
+        get_explore_targets
+
+checkpoint csv_to_parquet:
+    input:
+        csv=f"{COMBINED_DIR}/all_combined.csv",
+        script=str(BASE / "csv_to_parquet.py")
+    output:
+        parquet=PARQUET_FILE,
+        columns=META_COLUMNS_FILE
+    resources:
+        mem_mb=16000,
+        runtime=15
+    log:
+        "logs/csv_to_parquet.log"
+    shell:
+        """
+        python {input.script} \
+            --input {input.csv} \
+            --output {output.parquet} \
+            --columns-file {output.columns} \
+            > {log} 2>&1
+        """
+
+rule explore_metadata_col:
+    input:
+        data=PARQUET_FILE,
+        script=str(BASE / "explore_metadata.py")
+    output:
+        touch(EXPLORE_DIR + "/{col}/done.flag")
+    resources:
+        mem_mb=16000,
+        runtime=30
+    threads: 1
+    log:
+        "logs/explore_metadata_{col}.log"
+    shell:
+        """
+        python {input.script} \
+            --input {input.data} \
+            --output-dir {EXPLORE_DIR} \
+            --top-n 6 \
+            --column {wildcards.col} \
+            > {log} 2>&1
+        """
 
 rule combine:
     input: 
