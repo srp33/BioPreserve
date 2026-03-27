@@ -12,7 +12,6 @@ pixi run snakemake \
     --executor slurm \
     --default-resources slurm_account=srp33 slurm_partition="(auto)" runtime=180 \
     --jobs 300 \
-    --resources mem_mb=50000 runtime=1440 \
     --rerun-incomplete \
     --rerun-triggers mtime \
     --latency-wait 30

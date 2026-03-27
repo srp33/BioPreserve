@@ -2,25 +2,24 @@ Cross-Dataset Performance Averaged Across All Classifiers
 (MCC for categorical, R² for continuous metadata)
 ========================================================================================================================
 
-Method                                   Menopause   Age ≥70 ER status   Age <50      HER2  Age (R²)Hist. type Age 50-69     Chemo
+Method                                   Age 50-69 ER status Menopause      HER2   Age ≥70   Age <50     Chemo  Age (R²)Hist. type
 ----------------------------------------------------------------------------------------------------------------------------------
-CV Ceiling (Test Set)                         0.31      0.27      0.79      0.31      0.81      0.33      0.13      0.08      0.37
-Log-ComBat                                    0.34      0.18      0.75      0.32      0.77      0.21      0.16      0.03     -0.00
-DBA: Elasticnet (Shift-Only)                  0.34      0.22      0.59      0.31      0.67      0.20      0.22      0.05      0.01
-Bayesian (Effective Shift-Only)               0.34      0.22      0.60      0.31      0.67      0.18      0.22      0.05      0.01
-Bayesian (Shift+Scale)                        0.32      0.22      0.73      0.31      0.55      0.20      0.23      0.04     -0.01
-Min-Mean                                      0.31      0.14      0.72      0.29      0.74      0.16      0.18      0.04      0.01
-DBA: Logistic (Shift-Only)                    0.34      0.24      0.63      0.32      0.66      0.13      0.22      0.05     -0.00
-GMM                                           0.29      0.24      0.64      0.30      0.68      0.22      0.14      0.03     -0.01
-DBA: Histgradient (Shift-Only)                0.34      0.24      0.52      0.32      0.61      0.18      0.23      0.03     -0.01
-ORACLE: Multi-Label DBA (Shift-Only)          0.34      0.24      0.52      0.32      0.61      0.18      0.23      0.03     -0.01
-DBA: Randomforest (Shift-Only)                0.34      0.24      0.56      0.31      0.62      0.16      0.21      0.05     -0.01
-DBA: Randomforest (Shift+Scale)               0.32      0.21      0.66      0.29      0.54      0.17      0.23      0.02     -0.02
-DBA: Histgradient (Shift+Scale)               0.28      0.16      0.44      0.30      0.62      0.19      0.17      0.03     -0.05
-ORACLE: Multi-Label DBA (Shift-Scale)         0.28      0.16      0.44      0.30      0.62      0.19      0.17      0.03     -0.05
-DBA: Logistic (Shift+Scale)                   0.28      0.20      0.72      0.27      0.42     -0.10      0.11      0.04      0.00
-DBA: Elasticnet (Shift+Scale)                 0.31      0.20      0.44      0.24      0.49      0.06      0.09      0.03     -0.00
-MNN                                           0.14      0.06      0.33      0.10      0.25      0.07      0.09      0.02     -0.01
-Log-Transformed                               0.20      0.18      0.33      0.20      0.15     -0.15      0.08      0.02     -0.01
-Unadjusted                                    0.20      0.14      0.25      0.19      0.17      0.02      0.07      0.01     -0.04
-Aligned                                       0.20      0.18      0.34      0.20      0.15     -0.15      0.07      0.02     -0.01
+CV Ceiling (Test Set)                         0.07      0.78      0.31      0.81      0.27      0.31      0.37      0.32      0.13
+DBA: Elasticnet (Shift-Only)                  0.05      0.59      0.34      0.67      0.22      0.31      0.01      0.20      0.22
+Bayesian (Effective Shift-Only)               0.05      0.60      0.34      0.67      0.22      0.31      0.01      0.18      0.22
+Bayesian (Shift+Scale)                        0.04      0.73      0.32      0.55      0.22      0.31     -0.01      0.20      0.23
+DBA: Logistic (Shift-Only)                    0.05      0.63      0.34      0.66      0.24      0.32     -0.00      0.13      0.22
+DBA: Histgradient (Shift-Only)                0.03      0.52      0.34      0.61      0.24      0.32     -0.01      0.18      0.23
+ORACLE: Multi-Label DBA (Shift-Only)          0.03      0.52      0.34      0.61      0.24      0.32     -0.01      0.18      0.23
+DBA: Randomforest (Shift-Only)                0.05      0.56      0.34      0.62      0.24      0.31     -0.01      0.16      0.21
+DBA: Randomforest (Shift+Scale)               0.02      0.55      0.31      0.50      0.21      0.35     -0.00      0.17      0.21
+Log-ComBat                                    0.04      0.71      0.29      0.54      0.13      0.23     -0.02      0.19      0.11
+ORACLE: Multi-Label DBA (Shift-Scale)         0.03      0.44      0.28      0.62      0.16      0.30     -0.05      0.19      0.17
+DBA: Histgradient (Shift+Scale)               0.03      0.44      0.28      0.62      0.16      0.30     -0.05      0.19      0.17
+Min-Mean                                      0.04      0.75      0.27      0.39      0.09      0.23     -0.00      0.16      0.13
+GMM                                           0.07      0.64      0.28      0.44      0.13      0.22     -0.01      0.20      0.08
+DBA: Logistic (Shift+Scale)                   0.04      0.72      0.28      0.42      0.20      0.27      0.00     -0.10      0.11
+DBA: Elasticnet (Shift+Scale)                 0.03      0.44      0.31      0.49      0.20      0.24     -0.00      0.06      0.09
+Unadjusted                                    0.01      0.25      0.20      0.17      0.14      0.19     -0.04      0.02      0.07
+Log-Transformed                              -0.00      0.11      0.07      0.00      0.00      0.00      0.00     -0.02      0.00
+MNN                                           0.00      0.00      0.01      0.00      0.00      0.00      0.00     -0.31      0.02
