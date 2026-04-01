@@ -1,0 +1,68 @@
+# config.yaml
+
+out_dir: "/grphome/grp_batch_effects/outputs/metadata_features"
+data_dir: "/grphome/grp_batch_effects/data/metadata_features"
+scripts_dir: "."
+adjust_script: "../../adjust/adjust.R"
+scaling_script: "../classify_er_all_datasets/run_scaling_experiment.R"
+combined_file: "/grphome/grp_batch_effects/data/all_combined/all_combined.csv"
+geo_metadata: "/grphome/grp_batch_effects/data/geo_metadata.csv"
+
+adjusters: ["gmm", "min_mean", "mnn", "combat", "log_transformed"]
+dataset_ids:
+  - "gse19615"
+  - "gse20194"
+  - "gse20271"
+  - "gse23720"
+  - "gse25055"
+  - "gse25065"
+  - "gse31448"
+  - "gse45255"
+  - "gse58644"
+  - "gse62944_tumor"
+  - "gse76275"
+  - "gse81538"
+  - "gse96058_hiseq"
+  - "gse96058_nextseq"
+  - "metabric"
+
+targets: [
+  'meta_er_status', 
+  'meta_sex', 
+  'meta_chemotherapy', 
+  'meta_age_at_diagnosis',
+  'meta_age_lt35',
+  'meta_age_lt50',
+  'meta_age_lt70',
+  'meta_menopause_status',
+  'meta_histological_type'
+]
+
+ttest_targets: [
+  'meta_er_status',  
+  'meta_sex', 
+  'meta_chemotherapy', 
+  'meta_age_lt35',
+  'meta_age_lt50',
+  'meta_age_lt70',
+  'meta_menopause_status'
+]
+
+test_sources:
+- "metabric"
+
+dataset_list: 
+- "metabric" 
+- "gse62944_tumor"
+
+# Permutation importance
+n_repeats: 3
+n_jobs: 4
+random_state: 42
+
+# Feature Selection
+top_k: 100
+threshold: 0.05
+
+# Plotting
+top_n: 10

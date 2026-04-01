@@ -265,6 +265,9 @@ def process_dataset(raw_folder_path: Path, dataset_id: str, output_base_dir: Pat
         meta_df = meta_df.add_prefix('meta_')
         lower_to_full_case_columns = {col.lower():col for col in meta_df.columns}
 
+        # TODO: EXPAND THREEGENE COLUMN FROM METABRIC
+        
+
         # Standardize er status column name
         other_er_columns = ['meta_er_status', 'meta_er_ihc', 'meta_er', 'meta_er_status_diagnosis', 'meta_estrogen_receptor_status', 'meta_er_status_by_ihc', 'meta_er_status_ihc', 'meta_er_consensus', 'meta_esr1_status']
         for er_column in other_er_columns:
@@ -298,7 +301,7 @@ def process_dataset(raw_folder_path: Path, dataset_id: str, output_base_dir: Pat
             print_now(meta_df['meta_pr_status'].value_counts())
 
         # Standardize her2 status column name
-        other_her2_columns = ['meta_her2', 'meta_her_2', 'meta_her2_status', 'meta_her_2_status', 'meta_her2_status_diagnosis', 'meta_her2_receptor_status', 'meta_her2_ihc', 'meta_her2_status_by_ihc', 'meta_her2_consensus', 'meta_her2_snp6']
+        other_her2_columns = ['meta_her2', 'meta_her_2', 'meta_her2_status', 'meta_her_2_status', 'meta_her2_status_diagnosis', 'meta_her2_receptor_status', 'meta_her2_ihc', 'meta_her2_status_by_ihc', 'meta_her2_consensus', 'meta_her2_threegene']
         for her2_column in other_her2_columns:
             if her2_column in lower_to_full_case_columns:
                 her2_column = lower_to_full_case_columns[her2_column]
@@ -320,6 +323,11 @@ def process_dataset(raw_folder_path: Path, dataset_id: str, output_base_dir: Pat
         # Lowercase all values in relevant columns
         meta_df[cols_to_convert] = meta_df[cols_to_convert].apply(lambda col: col.astype(str).str.lower())
 
+        df = map_column_with_regex(df, 'meta_her2_status_combined', [
+            (r"equivocal", np.nan),
+            (r"her2-|negative", 0),
+            (r"her2\+|positive", 1)
+        ])
         def status_to_binary(val):
             if pd.isnull(val):
                 return np.nan 
@@ -336,15 +344,14 @@ def process_dataset(raw_folder_path: Path, dataset_id: str, output_base_dir: Pat
             except ValueError: 
                 pass
 
-            positive_vals = {'positive', 'p', 'pos', 'pos-low', '1', '2', '3', 'er+', 'he+', 'pr+', 'pgr+'}
-            negative_vals = {'negative', 'n', 'neg', '0', 'er-', 'he-', 'pr-', 'pgr-'}
+            # Match full strings
+            positive_vals = {'positive', 'gain', 'p', 'pos', 'pos-low', '1', '2', '3', 'er+', 'he+', 'pr+', 'pgr+'}
+            negative_vals = {'negative', 'loss', 'n', 'neg', '0', 'er-', 'he-', 'pr-', 'pgr-'}
 
-            for pos in positive_vals:
-                if pos in val:
-                    return 1
-            for neg in negative_vals:
-                if neg in val:
-                    return 0
+            if val in positive_vals:
+                return 1
+            elif val in negative_vals:
+                return 0
 
             return np.nan
 

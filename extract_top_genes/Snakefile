@@ -1,0 +1,316 @@
+configfile: "config/config.yaml"
+
+import os
+
+# -------------------------
+# Config
+# -------------------------
+OUT_DIR = config["out_dir"]
+DATA_DIR = config["data_dir"]
+SCRIPTS_DIR = config.get("scripts_dir", ".")
+ADJUST_SCRIPT = config.get("adjust_script", "../../adjust/adjust.R")
+SCALING_SCRIPT = config.get("scaling_script", "../classify_er_all_datasets/run_scaling_experiment.R")
+COMBINED_FILE = config["combined_file"]
+GEO_METADATA = config["geo_metadata"]
+
+ADJUSTERS = config["adjusters"]
+TARGETS = config["targets"]
+TTEST_TARGETS = config["ttest_targets"]
+K_VALUES = [2]
+TEST_SOURCES = config["test_sources"]
+
+TOP_K = config["top_k"]
+THRESHOLD = config["threshold"]
+
+N_REPEATS = config["n_repeats"]
+N_JOBS = config["n_jobs"]
+RANDOM_STATE = config["random_state"]
+
+TOP_N = config["top_n"]
+
+SUBSET_DIR = os.path.join(DATA_DIR, "subset")
+ADJUST_DIR = os.path.join(DATA_DIR, "adjusted")
+CLASSIFY_DIR = os.path.join(DATA_DIR, "classify")
+TTEST_DIR = os.path.join(DATA_DIR, "ttest")
+GENE_LIST_DIR = os.path.join(DATA_DIR, "ranked_genes")
+SELECTED_DIR = os.path.join(DATA_DIR, "selected_genes")
+PLOT_DIR = os.path.join(OUT_DIR, "plots")
+
+wildcard_constraints:
+    test_source="|".join(TEST_SOURCES),
+    adjuster="|".join(ADJUSTERS),
+    target="|".join(TARGETS),
+    k="|".join(map(str, K_VALUES))
+
+# -------------------------
+# All targets
+# -------------------------
+rule all:
+    input:
+        expand(
+            os.path.join(TTEST_DIR, "{adjuster}", "{adjuster}-{k}_studies-test_{test_source}-{target}-pvalues.csv"),
+            adjuster=ADJUSTERS,
+            k=K_VALUES,
+            test_source=TEST_SOURCES,
+            target=TARGETS
+        ),
+        expand(
+            os.path.join(PLOT_DIR, "{k}_{test_source}", "{target}_heatmap.png"),
+            k=K_VALUES,
+            test_source=TEST_SOURCES,
+            target=TTEST_TARGETS
+        ),
+        expand(
+            os.path.join(SELECTED_DIR, "{adjuster}-{k}_studies-{test_source}-train.csv"),
+            adjuster=ADJUSTERS,
+            k=K_VALUES,
+            test_source=TEST_SOURCES
+        )
+
+# -------------------------
+# Subset datasets
+# -------------------------
+rule subset:
+    input: 
+        combined_file=COMBINED_FILE
+    output: 
+        subset_file=os.path.join(SUBSET_DIR, "test_{test_source}-subset.csv")
+    log: 
+        "logs/subset/{test_source}-subset.log"
+    resources:
+        mem_mb=8000,
+        runtime=30
+    params:
+        data_list=" ".join(config['dataset_list'])
+    shell:
+        """
+        python {SCRIPTS_DIR}/subset_datasets.py \
+            --input {input.combined_file} \
+            --test {wildcards.test_source} \
+            --dataset_list {params.data_list} \
+            --out_dir {SUBSET_DIR} \
+            > {log} 2>&1
+        """
+
+# -------------------------
+# Align metadata
+# -------------------------
+rule align_metadata:
+    input: 
+        subset=os.path.join(SUBSET_DIR, "test_{test_source}-subset.csv")
+    output:
+        aligned=os.path.join(SUBSET_DIR, "metadata_aligned-{test_source}.csv")
+    log:
+        "logs/align/{test_source}-alignment.log"
+    resources:
+        mem_mb=4000,
+        runtime=20
+    shell:
+        """
+        python {SCRIPTS_DIR}/align_metadata.py \
+            --input {input.subset} \
+            --output {output.aligned} \
+            > {log} 2>&1
+        """
+
+# -------------------------
+# Adjust datasets
+# -------------------------
+rule adjust: 
+    input: 
+        aligned=os.path.join(SUBSET_DIR, "metadata_aligned-{test_source}.csv")
+    output: 
+        adjusted=os.path.join(
+            ADJUST_DIR,
+            "{adjuster}",
+            "{adjuster}-{k}_studies-test_{test_source}.csv"
+        )
+    log: 
+        "logs/adjust/{adjuster}-{k}-{test_source}-adjust.log"
+    resources:
+        mem_mb=32000,
+        runtime=30
+    params:
+        output_dir=ADJUST_DIR,
+        adjust_script=ADJUST_SCRIPT,
+        metadata=GEO_METADATA
+    shell:
+        """
+        set -euo pipefail
+        pixi run Rscript {SCALING_SCRIPT} \
+            --adjuster {wildcards.adjuster} \
+            --subset-path {input.aligned} \
+            --k {wildcards.k} \
+            --test {wildcards.test_source} \
+            --output-dir {params.output_dir} \
+            --adjust-script {params.adjust_script} \
+            --metadata-file {params.metadata} \
+            > {log} 2>&1
+        """
+
+# ------------------------
+# T-Test
+# ------------------------
+rule ttest:
+    input:
+        csv=os.path.join(ADJUST_DIR, "{adjuster}", "{adjuster}-{k}_studies-test_{test_source}.csv")
+    output:
+        target_pval=os.path.join(
+            TTEST_DIR,
+            "{adjuster}",
+            "{adjuster}-{k}_studies-test_{test_source}-{target}-pvalues.csv"
+        )
+    log:
+        "logs/ttest/{adjuster}-{k}-{test_source}-{target}.log"
+    resources:
+        mem_mb= 16000,
+        runtime=15
+    params:
+        meta_col="{target}"  # single target per rule run
+    shell:
+        """
+        python {SCRIPTS_DIR}/test_stats.py \
+            --csv {input.csv} \
+            --meta-cols {params.meta_col} \
+            --outdir {TTEST_DIR}/{wildcards.adjuster} \
+            > {log} 2>&1
+        """
+
+# ------------------------
+# Rank Genes
+# ------------------------
+rule rank_genes:
+    input:
+        csvs=lambda wc: expand(
+            os.path.join(
+                TTEST_DIR,
+                "{adjuster}",
+                "{adjuster}-{k}_studies-test_{test_source}-tstats.csv"
+            ),
+            adjuster=ADJUSTERS,
+            k=[wc.k],
+            test_source=[wc.test_source]
+        )
+    output:
+        matrix=os.path.join(GENE_LIST_DIR, "{k}_{test_source}", "{target}_gene_matrix.csv")
+    log:
+        "logs/rank/{k}_{test_source}_{target}.log"
+    resources:
+        mem_mb=8000,
+        runtime=10
+    params:
+        mode="tstat",
+        outdir=lambda wc: os.path.join(GENE_LIST_DIR, f"{wc.k}_{wc.test_source}")
+    shell:
+        """
+        python {SCRIPTS_DIR}/generate_gene_lists.py \
+            --csvs {input.csvs} \
+            --outdir {params.outdir} \
+            --target {wildcards.target} \
+            --mode {params.mode} \
+            > {log} 2>&1
+        """
+
+# ------------------------
+# Select Top Genes
+# ------------------------
+rule select_top_genes:
+    input:
+        matrices=lambda wc: [
+            os.path.join(GENE_LIST_DIR, f"{wc.k}_{wc.test_source}", f"{t}_gene_matrix.csv")
+            for t in TTEST_TARGETS
+        ]
+    output:
+        top_genes=os.path.join(GENE_LIST_DIR, "{k}_{test_source}", f"top_{TOP_K}_selected_genes.csv")
+    log:
+        "logs/select_top_genes/{k}_{test_source}.log"
+    resources:
+        mem_mb=8000,
+        runtime=10
+    params:
+        top_n=TOP_K
+    shell:
+        """
+        python {SCRIPTS_DIR}/select_top_genes.py \
+            --ranked_lists {input.matrices} \
+            --output {output.top_genes} \
+            --top_n {params.top_n} \
+            > {log} 2>&1
+        """
+
+# ------------------------
+# Split into train and test dataset selected genes
+# ------------------------
+rule subset_expression:
+    input:
+        genes=os.path.join(GENE_LIST_DIR, "{k}_{test_source}", f"top_{TOP_K}_selected_genes.csv"),
+        expr=os.path.join(
+            ADJUST_DIR,
+            "{adjuster}",
+            "{adjuster}-{k}_studies-test_{test_source}.csv"
+        )
+    output:
+        train=os.path.join(
+            SELECTED_DIR,
+            "{adjuster}-{k}_studies-{test_source}-train.csv"
+        ),
+        test=os.path.join(
+            SELECTED_DIR,
+            "{adjuster}-{k}_studies-{test_source}-test.csv"
+        )
+    log:
+        "logs/split_selected/{adjuster}-{k}-{test_source}.log"
+    resources:
+        mem_mb=8000,
+        runtime=10
+    params:
+        train="gse62944_tumor",
+        test="metabric"
+    shell:
+        """
+        python {SCRIPTS_DIR}/subset_expression.py \
+            --expression {input.expr} \
+            --genes {input.genes} \
+            --train_out {output.train} \
+            --test_out {output.test} \
+            --split \
+            --train {params.train} \
+            --test {params.test} \
+            > {log} 2>&1
+        """
+
+
+# ------------------------
+# Plot heatmaps
+# ------------------------
+
+rule plot_heatmap:
+    input:
+        matrix=os.path.join(GENE_LIST_DIR, "{k}_{test_source}", "{target}_gene_matrix.csv"),
+        pvals=lambda wc: [
+            os.path.join(
+                TTEST_DIR,
+                adj,
+                f"{adj}-{wc.k}_studies-test_{wc.test_source}-{wc.target}-pvalues.csv"
+            )
+            for adj in ADJUSTERS
+        ]
+    output:
+        os.path.join(PLOT_DIR, "{k}_{test_source}", "{target}_heatmap.png")
+    log:
+        "logs/plot/{k}-{test_source}-{target}.log"
+    resources:
+        mem_mb=8000,
+        runtime=20
+    params: n=TOP_N
+    shell:
+        """
+        python {SCRIPTS_DIR}/plot_heatmap.py \
+            --input {input.matrix} \
+            --pvals {input.pvals} \
+            --outfile {output} \
+            --target {wildcards.target} \
+            --alpha 0.05 \
+            --top_n {params.n} \
+            > {log} 2>&1
+        """
