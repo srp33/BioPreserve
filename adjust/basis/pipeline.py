@@ -1,11 +1,12 @@
 """
 Main pipeline entry points.
 
-    from basis import preprocess, build_dictionary, align, run_pipeline
+    from basis import preprocess, load_combined, build_dictionary, align, run_pipeline
 """
 
 import logging
 import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -14,25 +15,17 @@ from basis.combat import combat_correct
 from basis.ot import sinkhorn_uot
 from basis.embedding import gmm_posterior_embed
 from basis import dictionary as dict_mod
+from basis.config import BASISConfig, DatasetConfig
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Preprocessing (single dataset)
+# Preprocessing & Data Loading
 # ---------------------------------------------------------------------------
 
 def preprocess(csv_path, log_transform=False, meta_prefix="meta_"):
     """Load a dataset, keep numeric non-meta columns, optionally log-transform.
-
-    Parameters
-    ----------
-    csv_path : str
-        Path to CSV file.
-    log_transform : bool
-        If True, apply log(x - col_min + 1) transform.
-    meta_prefix : str
-        Prefix for metadata columns.
 
     Returns (gene_df, meta_df, gene_df_raw).
     """
@@ -48,21 +41,8 @@ def preprocess(csv_path, log_transform=False, meta_prefix="meta_"):
     return gene_df, meta_df, gene_raw
 
 
-# ---------------------------------------------------------------------------
-# Combined loading (single CSV with multiple studies)
-# ---------------------------------------------------------------------------
-
 def load_combined(csv_path, test_source, log_transform=False, meta_prefix="meta_"):
     """Load a combined CSV, split into reference and target based on test_source.
-
-    Parameters
-    ----------
-    csv_path : str
-        Path to combined CSV.
-    test_source : str
-        The study ID (meta_source) to treat as the target.
-    log_transform : bool
-    meta_prefix : str
 
     Returns (ref_log, tgt_log, ref_meta, tgt_meta).
     """
@@ -186,18 +166,6 @@ def build_dictionary(datasets, config=None):
 def align(ref_log, tgt_log, gene_sets, ot_epsilon=0.01, ot_tau=0.1, keep_shared_only=True):
     """Align one target to reference using GMM posterior embedding + OT + ComBat.
 
-    For multiple targets, call this once per target.
-
-    Parameters
-    ----------
-    ref_log, tgt_log : pd.DataFrame
-        Log-transformed expression (samples × genes).
-    gene_sets : dict
-        {axis_name: {gene: hub_weight, ...}}.
-    ot_epsilon, ot_tau : float
-    keep_shared_only : bool
-        If True, only return columns present in BOTH datasets (the intersection).
-
     Returns
     -------
     aligned : pd.DataFrame
@@ -253,18 +221,7 @@ def align(ref_log, tgt_log, gene_sets, ot_epsilon=0.01, ot_tau=0.1, keep_shared_
 
 
 def combine_results(ref_df, results_dict, keep_shared_only=True, meta_prefix="meta_"):
-    """Combine reference and corrected targets into one DataFrame.
-
-    Parameters
-    ----------
-    ref_df : pd.DataFrame
-        Reference expression (samples x genes).
-    results_dict : dict
-        {label: (aligned_df, metadata)}
-    keep_shared_only : bool
-        If True, restrict all datasets to the intersection of their genes.
-    meta_prefix : str
-    """
+    """Combine reference and corrected targets into one DataFrame."""
     if not results_dict:
         return ref_df
 
@@ -304,26 +261,82 @@ def combine_results(ref_df, results_dict, keep_shared_only=True, meta_prefix="me
 
 
 # ---------------------------------------------------------------------------
-# Full pipeline
+# High-level Pipeline Execution
 # ---------------------------------------------------------------------------
+
+def execute_pipeline(ref_log, ref_meta, targets, cfg, gene_sets=None, save_combined_path=None):
+    """
+    Core execution logic: dictionary -> alignment -> saving -> visualization.
+
+    Parameters
+    ----------
+    ref_log, ref_meta : pd.DataFrame
+    targets : list of (tgt_log, tgt_meta, label)
+    cfg : BASISConfig
+    gene_sets : dict, optional
+    save_combined_path : str, optional
+    """
+    # 1. Dictionary phase
+    if gene_sets is None:
+        gene_sets = build_dictionary([ref_log] + [t[0] for t in targets], cfg.dict_config())
+    else:
+        logger.info("Using precomputed gene community dictionary.")
+
+    # 2. Output handling
+    results = {}
+    if cfg.output_dir:
+        os.makedirs(cfg.output_dir, exist_ok=True)
+        with open(os.path.join(cfg.output_dir, "gene_community_sets.json"), "w") as f:
+            json.dump(gene_sets, f, indent=2)
+
+    # 3. Alignment phase
+    for tgt_log, tgt_meta, label in targets:
+        logger.info(f"Aligning {label} to reference...")
+        aligned, metadata = align(ref_log, tgt_log, gene_sets, 
+                                  cfg.ot_epsilon, cfg.ot_tau, 
+                                  keep_shared_only=cfg.keep_shared_only)
+        results[label] = (aligned, metadata)
+
+        # 4. Save individual results
+        if cfg.output_dir:
+            final_df = pd.concat([tgt_meta, aligned], axis=1)
+            final_df.to_csv(os.path.join(cfg.output_dir, f"aligned_{label}.csv"))
+            with open(os.path.join(cfg.output_dir, f"metadata_{label}.json"), "w") as f:
+                json.dump(metadata, f, indent=2)
+
+    # 5. Save combined 'source' file for benchmarking workflows
+    if cfg.output_dir and save_combined_path and targets:
+        # Match benchmarking needs: primary target is targets[0]
+        label = targets[0][2]
+        aligned, metadata = results[label]
+        tgt_meta = targets[0][1]
+        final_tgt = pd.concat([tgt_meta, aligned], axis=1)
+        
+        common = aligned.columns.tolist()
+        ref_to_combine = pd.concat([ref_meta, ref_log[common]], axis=1)
+        combined_df = combine_results(ref_to_combine, {label: (final_tgt, metadata)}, 
+                                      keep_shared_only=cfg.keep_shared_only,
+                                      meta_prefix=cfg.meta_prefix)
+        combined_df.to_csv(save_combined_path)
+        logger.info(f"Saved combined source file to {save_combined_path}")
+
+    # 6. Visualization
+    if cfg.viz and cfg.output_dir:
+        from basis.viz.pca_plots import full_pca
+        for label, (aligned, _) in results.items():
+            tgt_log = [t[0] for t in targets if t[2] == label][0]
+            tgt_meta = [t[1] for t in targets if t[2] == label][0]
+            full_pca(ref_log, tgt_log, aligned, ref_meta, tgt_meta,
+                     os.path.join(cfg.output_dir, f"full_pca_{label}.png"))
+        logger.info(f"Outputs and visualizations saved to {cfg.output_dir}")
+
+    return results, gene_sets
+
 
 def run_pipeline(ref_path=None, tgt_path=None, output_dir=None, config=None,
                  ot_epsilon=0.01, ot_tau=0.1, log_transform=False, viz=True,
-                 cfg=None, gene_sets=None):
-    """Run the complete BASIS pipeline.
-
-    Supports N datasets via cfg.datasets (first = reference, rest = targets).
-    For backward compat, ref_path/tgt_path work for the 2-dataset case.
-
-    Returns
-    -------
-    results : dict
-        {label: (aligned_df, metadata)} for each target.
-    gene_sets : dict
-    """
-    import json, os
-    from basis.config import BASISConfig, DatasetConfig
-
+                 cfg=None, gene_sets=None, save_combined_path=None):
+    """Run the complete BASIS pipeline from CSV paths."""
     if cfg is None:
         cfg = BASISConfig(
             datasets=[
@@ -334,6 +347,7 @@ def run_pipeline(ref_path=None, tgt_path=None, output_dir=None, config=None,
             viz=viz,
             ot_epsilon=ot_epsilon,
             ot_tau=ot_tau,
+            keep_shared_only=True
         )
         if config:
             for k, v in config.items():
@@ -348,39 +362,15 @@ def run_pipeline(ref_path=None, tgt_path=None, output_dir=None, config=None,
 
     all_data = []
     for ds in cfg.datasets:
-        df, meta, _ = preprocess(ds.path, log_transform=ds.log_transform)
+        df, meta, _ = preprocess(ds.path, log_transform=ds.log_transform, meta_prefix=cfg.meta_prefix)
         all_data.append((df, meta, ds.label))
 
-    if gene_sets is None:
-        gene_sets = build_dictionary([d[0] for d in all_data], cfg.dict_config())
-    else:
-        logger.info("Using precomputed gene community dictionary.")
+    ref_log, ref_meta, ref_label = all_data[0]
+    targets = all_data[1:]
 
-    ref_df, ref_meta, ref_label = all_data[0]
-    results = {}
-    for df, meta, label in all_data[1:]:
-        logger.info(f"Aligning {label} to {ref_label}...")
-        aligned, metadata = align(ref_df, df, gene_sets, cfg.ot_epsilon, cfg.ot_tau)
-        results[label] = (aligned, metadata)
-
-    if cfg.output_dir:
-        os.makedirs(cfg.output_dir, exist_ok=True)
-        with open(os.path.join(cfg.output_dir, "gene_community_sets.json"), "w") as f:
-            json.dump(gene_sets, f, indent=2)
-        for label, (aligned, metadata) in results.items():
-            aligned.to_csv(os.path.join(cfg.output_dir, f"aligned_{label}.csv"))
-            with open(os.path.join(cfg.output_dir, f"metadata_{label}.json"), "w") as f:
-                json.dump(metadata, f, indent=2)
-        logger.info(f"Outputs saved to {cfg.output_dir}")
-
-        if cfg.viz:
-            from basis.viz.pca_plots import full_pca
-            for label, (aligned, _) in results.items():
-                tgt_df = [d[0] for d in all_data if d[2] == label][0]
-                tgt_meta = [d[1] for d in all_data if d[2] == label][0]
-                full_pca(ref_df, tgt_df, aligned, ref_meta, tgt_meta,
-                         os.path.join(cfg.output_dir, f"full_pca_{label}.png"))
-            logger.info("Visualizations saved")
+    results, gene_sets = execute_pipeline(ref_log, ref_meta, targets, cfg, 
+                                          gene_sets=gene_sets, 
+                                          save_combined_path=save_combined_path)
 
     logger.info("=== Pipeline complete ===")
     return results, gene_sets
