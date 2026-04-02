@@ -208,12 +208,14 @@ def align(ref_log, tgt_log, gene_sets, ot_epsilon=0.01, ot_tau=0.1, keep_shared_
     logger.info(f"  Mass={mass:.4f}, w_ref std={w_ref.std():.4f}, w_tgt std={w_tgt.std():.4f}")
 
     # Step 3: ComBat
-    logger.info("ComBat: R-faithful batch correction...")
+    logger.info("ComBat: R-faithful batch correction (Weighted)...")
     X_mat = X_df.values.T
     Y_mat = Y_df.values.T
     combined = np.hstack([X_mat, Y_mat])
     batch_labels = np.array([0] * X_mat.shape[1] + [1] * Y_mat.shape[1])
-    corrected = combat_correct(combined, batch_labels, ref_batch=0)
+    combat_weights = np.concatenate([w_ref, w_tgt])
+    
+    corrected = combat_correct(combined, batch_labels, ref_batch=0, weights=combat_weights)
     Y_final = corrected[:, X_mat.shape[1]:]
 
     logger.info(f"  Ref mean: {np.mean(X_mat):.4f}, Tgt before: {np.mean(Y_mat):.4f}, "
@@ -299,6 +301,89 @@ def auto_order_targets(ref_log, targets, gene_sets, cfg):
     return [label_to_target[lbl] for lbl in ordered_labels]
 
 
+def joint_align(ref_log, targets, gene_sets, ot_epsilon=0.01, ot_tau=0.1, keep_shared_only=True):
+    """Simultaneously align multiple targets to the reference using joint ComBat.
+
+    Returns
+    -------
+    results : dict
+        {label: (aligned_df, metadata)}
+    """
+    logger.info(f"Joint Alignment: Aligning {len(targets)} targets simultaneously...")
+    
+    # 1. Find common genes across ref and ALL targets
+    common_genes = set(ref_log.columns)
+    for t_log, _, _ in targets:
+        common_genes &= set(t_log.columns)
+    common_genes = sorted(list(common_genes))
+    
+    X_df = ref_log[common_genes]
+    X_scores = gmm_posterior_embed(X_df, gene_sets)
+    X_embed = X_scores.values
+    
+    # 2. Compute individual OT masses for logging/metadata
+    masses = {}
+    Y_dfs = []
+    tgt_weights_list = []
+    
+    for t_log, t_meta, label in targets:
+        Y_df = t_log[common_genes]
+        Y_scores = gmm_posterior_embed(Y_df, gene_sets)
+        _, w_tgt, mass = sinkhorn_uot(X_embed, Y_scores.values, ot_epsilon, ot_tau)
+        masses[label] = mass
+        Y_dfs.append(Y_df.values.T)
+        tgt_weights_list.append(w_tgt)
+        logger.info(f"  {label} intersection mass: {mass:.4f}")
+
+    # 3. Concatenate all datasets for joint ComBat
+    X_mat = X_df.values.T
+    combined = np.hstack([X_mat] + Y_dfs)
+    
+    # 4. Create batch labels (0=ref, 1=tgt1, 2=tgt2, ...) and weights
+    batch_labels = [0] * X_mat.shape[1]
+    for i, y_mat in enumerate(Y_dfs):
+        batch_labels.extend([i + 1] * y_mat.shape[1])
+    batch_labels = np.array(batch_labels)
+    
+    # Reference is the anchor, give it uniform weights or mean of w_ref
+    # In standard BASIS, reference gets w_ref, but for joint, a uniform 1.0 is a stable anchor
+    ref_weights = np.ones(X_mat.shape[1])
+    combat_weights = np.concatenate([ref_weights] + tgt_weights_list)
+    
+    # 5. Joint ComBat Correction
+    logger.info("ComBat: Joint R-faithful batch correction (Weighted)...")
+    corrected = combat_correct(combined, batch_labels, ref_batch=0, weights=combat_weights)
+    
+    # 6. Split back into individual targets
+    results = {}
+    current_idx = X_mat.shape[1]
+    for i, (t_log, t_meta, label) in enumerate(targets):
+        n_samples = Y_dfs[i].shape[1]
+        Y_final = corrected[:, current_idx:current_idx + n_samples]
+        current_idx += n_samples
+        
+        logger.info(f"  {label} mean before: {np.mean(Y_dfs[i]):.4f}, after: {np.mean(Y_final):.4f}")
+        
+        if keep_shared_only:
+            aligned = pd.DataFrame(Y_final.T, index=t_log.index, columns=common_genes)
+        else:
+            aligned = t_log.copy()
+            for j, gene in enumerate(common_genes):
+                if gene in aligned.columns:
+                    aligned[gene] = Y_final[j, :]
+                    
+        metadata = {
+            "ot_epsilon": ot_epsilon, "ot_tau": ot_tau,
+            "intersection_mass": masses[label],
+            "n_common_genes": len(common_genes),
+            "n_axes": len(gene_sets),
+            "alignment_mode": "joint"
+        }
+        results[label] = (aligned, metadata)
+        
+    return results
+
+
 def execute_pipeline(ref_log, ref_meta, targets, cfg, gene_sets=None, save_combined_path=None):
     """Core execution logic: dictionary -> alignment -> saving -> visualization."""
     # 1. Dictionary phase (always using all datasets for the shared basis)
@@ -314,8 +399,22 @@ def execute_pipeline(ref_log, ref_meta, targets, cfg, gene_sets=None, save_combi
         with open(os.path.join(cfg.output_dir, "gene_community_sets.json"), "w") as f:
             json.dump(gene_sets, f, indent=2)
 
-    # 3. Sequential vs Hierarchical resolution
-    if cfg.merge_order and isinstance(cfg.merge_order, list) and any(isinstance(i, list) for i in cfg.merge_order):
+    # 3. Alignment phase
+    if cfg.joint:
+        logger.info("Executing Joint Alignment Strategy...")
+        aligned_results = joint_align(ref_log, targets, gene_sets, 
+                                      ot_epsilon=cfg.ot_epsilon, ot_tau=cfg.ot_tau, 
+                                      keep_shared_only=cfg.keep_shared_only)
+        for label, (aligned, metadata) in aligned_results.items():
+            results[label] = (aligned, metadata)
+            if cfg.output_dir:
+                tgt_meta = [t[1] for t in targets if t[2] == label][0]
+                final_df = pd.concat([tgt_meta, aligned], axis=1)
+                final_df.to_csv(os.path.join(cfg.output_dir, f"aligned_{label}.csv"))
+                with open(os.path.join(cfg.output_dir, f"metadata_{label}.json"), "w") as f:
+                    json.dump(metadata, f, indent=2)
+
+    elif cfg.merge_order and isinstance(cfg.merge_order, list) and any(isinstance(i, list) for i in cfg.merge_order):
         # Hierarchical Tree Mode
         logger.info("Executing Hierarchical Merge Tree...")
         data_map = {t[2]: t for t in targets}
@@ -352,35 +451,35 @@ def execute_pipeline(ref_log, ref_meta, targets, cfg, gene_sets=None, save_combi
             logger.info(f"Saved hierarchical merge result to {save_combined_path}")
         return {}, gene_sets
 
-    # Standard / Progressive Loop
-    if cfg.auto_merge:
-        targets = auto_order_targets(ref_log, targets, gene_sets, cfg)
-    elif cfg.merge_order:
-        label_to_target = {t[2]: t for t in targets}
-        targets = [label_to_target[str(lbl)] for lbl in cfg.merge_order if str(lbl) in label_to_target]
+    else:
+        # Standard / Progressive Loop
+        if cfg.auto_merge:
+            targets = auto_order_targets(ref_log, targets, gene_sets, cfg)
+        elif cfg.merge_order:
+            label_to_target = {t[2]: t for t in targets}
+            targets = [label_to_target[str(lbl)] for lbl in cfg.merge_order if str(lbl) in label_to_target]
 
-    current_ref_log = ref_log
-    current_ref_meta = ref_meta
-    results = {}
+        current_ref_log = ref_log
+        current_ref_meta = ref_meta
 
-    for tgt_log, tgt_meta, label in targets:
-        logger.info(f"Aligning {label} to current reference (Ref Size={len(current_ref_log)})...")
-        aligned, metadata = align(current_ref_log, tgt_log, gene_sets, 
-                                  cfg.ot_epsilon, cfg.ot_tau, 
-                                  keep_shared_only=cfg.keep_shared_only)
-        results[label] = (aligned, metadata)
+        for tgt_log, tgt_meta, label in targets:
+            logger.info(f"Aligning {label} to current reference (Ref Size={len(current_ref_log)})...")
+            aligned, metadata = align(current_ref_log, tgt_log, gene_sets, 
+                                      cfg.ot_epsilon, cfg.ot_tau, 
+                                      keep_shared_only=cfg.keep_shared_only)
+            results[label] = (aligned, metadata)
 
-        # Progressive Reference Expansion
-        if cfg.progressive:
-            logger.info(f"  [Progressive] Adding {label} to reference pool.")
-            current_ref_log = pd.concat([current_ref_log, aligned])
-            current_ref_meta = pd.concat([current_ref_meta, tgt_meta])
+            # Progressive Reference Expansion
+            if cfg.progressive:
+                logger.info(f"  [Progressive] Adding {label} to reference pool.")
+                current_ref_log = pd.concat([current_ref_log, aligned])
+                current_ref_meta = pd.concat([current_ref_meta, tgt_meta])
 
-        if cfg.output_dir:
-            final_df = pd.concat([tgt_meta, aligned], axis=1)
-            final_df.to_csv(os.path.join(cfg.output_dir, f"aligned_{label}.csv"))
-            with open(os.path.join(cfg.output_dir, f"metadata_{label}.json"), "w") as f:
-                json.dump(metadata, f, indent=2)
+            if cfg.output_dir:
+                final_df = pd.concat([tgt_meta, aligned], axis=1)
+                final_df.to_csv(os.path.join(cfg.output_dir, f"aligned_{label}.csv"))
+                with open(os.path.join(cfg.output_dir, f"metadata_{label}.json"), "w") as f:
+                    json.dump(metadata, f, indent=2)
 
     # 4. Save combined 'source' file
     if cfg.output_dir and save_combined_path and targets:
