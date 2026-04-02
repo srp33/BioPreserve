@@ -229,6 +229,48 @@ def fit_gmm_batch(data_chunk, weight_alpha=None, variance_alpha=None, max_iter=1
     return {'means': means, 'variances': variances, 'weights': weights}
 
 
+def get_gmm_responsibilities(data, genes_are_rows=False, log_transform=True, **kwargs):
+    """
+    Fits GMM and returns responsibilities.
+    Matches the signature expected by BASIS dictionary building.
+    """
+    if not genes_are_rows:
+        data = data.T
+    
+    n_genes, n_samples = data.shape
+    
+    if log_transform:
+        min_vals = np.nanmin(data, axis=1, keepdims=True)
+        data = np.log(data - min_vals + 1.0)
+    
+    # Use existing vectorized fitting logic
+    params = fit_gmm_batch(data, **kwargs)
+    
+    # Final E-step to get responsibilities
+    means = params['means']
+    variances = params['variances']
+    weights = params['weights']
+    eps = 1e-12
+    
+    pdf_k1 = compute_gaussian_pdf(data, means[:, 0:1], variances[:, 0:1], weights[:, 0:1])
+    pdf_k2 = compute_gaussian_pdf(data, means[:, 1:2], variances[:, 1:2], weights[:, 1:2])
+    
+    pdf_sums = pdf_k1 + pdf_k2 + eps
+    resp_k1 = pdf_k1 / pdf_sums
+    resp_k2 = pdf_k2 / pdf_sums
+    
+    # BASIS expects [lower, upper] based on means
+    swap_needed = means[:, 0] > means[:, 1]
+    if np.any(swap_needed):
+        r1_final = resp_k1.copy()
+        r2_final = resp_k2.copy()
+        r1_final[swap_needed, :] = resp_k2[swap_needed, :]
+        r2_final[swap_needed, :] = resp_k1[swap_needed, :]
+        return {"responsibilities": (r1_final, r2_final), "params": params}
+    
+    return {"responsibilities": (resp_k1, resp_k2), "params": params}
+
+
 def apply_gmm_transforms_batch(data_chunk, gmm_params, mean_mean_zero, mean1_zero,
                                unit_var, means_at_1, output_counts):
     """
