@@ -45,6 +45,10 @@ Command Line Usage:
     # Step B: Align using the pre-computed dictionary (much faster)
     python -m basis --combined-path subset.csv --test-source GSE123 --output-dir out/ \
                     --load-dictionary axes.json
+                    
+    # WLS alternative
+    # Use Weighted Least Squares Affine Correction instead of ComBat
+    python -m basis --combined-path all.csv --test-source GSE123 --output-dir out/ --wls
 """
 
 from basis.pipeline import preprocess, load_combined, build_dictionary, align, run_pipeline

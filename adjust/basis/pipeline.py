@@ -187,7 +187,51 @@ def build_dictionary(datasets, config=None):
 # Alignment (two datasets + dictionary)
 # ---------------------------------------------------------------------------
 
-def align(ref_log, tgt_log, gene_sets, ot_epsilon=0.01, ot_tau=0.1, keep_shared_only=True):
+def ot_barycentric_correction(X_raw, Y_raw, P_matrix):
+    """
+    X_raw: Reference expression (n_genes, n_ref)
+    Y_raw: Target expression (n_genes, n_tgt)
+    P_matrix: Transport plan from Sinkhorn (n_ref, n_tgt)
+    """
+    # 1. Target marginals (the weights)
+    w_tgt = np.sum(P_matrix, axis=0)  # shape: (n_tgt,)
+    
+    # 2. Normalize columns of P to sum to 1 (conditional probability)
+    # If a target has 0 weight, avoid division by zero
+    P_norm = P_matrix / np.maximum(w_tgt, 1e-12)
+    
+    # 3. Create the Virtual Reference Dataset
+    # X_raw is (Genes, Ref). P_norm is (Ref, Tgt). 
+    # Dot product yields (Genes, Tgt)
+    Y_virtual = X_raw @ P_norm
+    
+    # 4. Calculate Shift and Scale per gene via Weighted Least Squares
+    # We want to map Y_raw -> Y_virtual
+    Y_corrected = np.zeros_like(Y_raw)
+    
+    for g in range(X_raw.shape[0]):
+        y_r = Y_raw[g, :]
+        y_v = Y_virtual[g, :]
+        
+        # Weighted mean
+        mean_r = np.average(y_r, weights=w_tgt)
+        mean_v = np.average(y_v, weights=w_tgt)
+        
+        # Weighted covariance and variance
+        cov = np.average((y_r - mean_r) * (y_v - mean_v), weights=w_tgt)
+        var_r = np.average((y_r - mean_r)**2, weights=w_tgt)
+        
+        # OLS coefficients
+        scale = cov / max(var_r, 1e-12)
+        shift = mean_v - (scale * mean_r)
+        
+        # Apply affine transformation
+        Y_corrected[g, :] = (y_r * scale) + shift
+        
+    return Y_corrected
+
+
+def align(ref_log, tgt_log, gene_sets, ot_epsilon=0.01, ot_tau=0.1, keep_shared_only=True, use_wls=False):
     """Align one target to reference using GMM posterior embedding + OT + ComBat."""
     common_genes = sorted(set(ref_log.columns) & set(tgt_log.columns))
     X_df = ref_log[common_genes]
@@ -202,24 +246,37 @@ def align(ref_log, tgt_log, gene_sets, ot_epsilon=0.01, ot_tau=0.1, keep_shared_
     X_embed = X_scores.values
     Y_embed = Y_scores.values
 
-    # Step 2: OT weights
-    logger.info(f"OT: Sinkhorn UOT (epsilon={ot_epsilon}, tau={ot_tau})...")
-    w_ref, w_tgt, mass = sinkhorn_uot(X_embed, Y_embed, ot_epsilon, ot_tau)
-    logger.info(f"  Mass={mass:.4f}, w_ref std={w_ref.std():.4f}, w_tgt std={w_tgt.std():.4f}")
+    # Step 2 & 3: OT weights and Batch Correction
+    if use_wls:
+        logger.info(f"OT: Sinkhorn UOT (epsilon={ot_epsilon}, tau={ot_tau}) with Plan...")
+        w_ref, w_tgt, mass, P = sinkhorn_uot(X_embed, Y_embed, ot_epsilon, ot_tau, return_plan=True)
+        logger.info(f"  Mass={mass:.4f}, w_ref std={w_ref.std():.4f}, w_tgt std={w_tgt.std():.4f}")
+        
+        logger.info("WLS: OT-Barycentric Affine Correction...")
+        X_mat = X_df.values.T
+        Y_mat = Y_df.values.T
+        Y_final = ot_barycentric_correction(X_mat, Y_mat, P)
+        
+        logger.info(f"  Ref mean: {np.mean(X_mat):.4f}, Tgt before: {np.mean(Y_mat):.4f}, "
+                    f"Tgt after: {np.mean(Y_final):.4f}")
+    else:
+        logger.info(f"OT: Sinkhorn UOT (epsilon={ot_epsilon}, tau={ot_tau})...")
+        w_ref, w_tgt, mass = sinkhorn_uot(X_embed, Y_embed, ot_epsilon, ot_tau)
+        logger.info(f"  Mass={mass:.4f}, w_ref std={w_ref.std():.4f}, w_tgt std={w_tgt.std():.4f}")
 
-    # Step 3: ComBat
-    logger.info("ComBat: R-faithful batch correction (Weighted)...")
-    X_mat = X_df.values.T
-    Y_mat = Y_df.values.T
-    combined = np.hstack([X_mat, Y_mat])
-    batch_labels = np.array([0] * X_mat.shape[1] + [1] * Y_mat.shape[1])
-    combat_weights = np.concatenate([w_ref, w_tgt])
-    
-    corrected = combat_correct(combined, batch_labels, ref_batch=0, weights=combat_weights)
-    Y_final = corrected[:, X_mat.shape[1]:]
+        logger.info("ComBat: R-faithful batch correction (Weighted)...")
+        X_mat = X_df.values.T
+        Y_mat = Y_df.values.T
+        combined = np.hstack([X_mat, Y_mat])
+        batch_labels = np.array([0] * X_mat.shape[1] + [1] * Y_mat.shape[1])
+        combat_weights = np.concatenate([w_ref, w_tgt])
+        
+        corrected = combat_correct(combined, batch_labels, ref_batch=0, weights=combat_weights)
+        Y_final = corrected[:, X_mat.shape[1]:]
 
-    logger.info(f"  Ref mean: {np.mean(X_mat):.4f}, Tgt before: {np.mean(Y_mat):.4f}, "
-                f"Tgt after: {np.mean(Y_final):.4f}")
+        logger.info(f"  Ref mean: {np.mean(X_mat):.4f}, Tgt before: {np.mean(Y_mat):.4f}, "
+                    f"Tgt after: {np.mean(Y_final):.4f}")
+
 
     # Build output
     if keep_shared_only:
@@ -400,21 +457,7 @@ def execute_pipeline(ref_log, ref_meta, targets, cfg, gene_sets=None, save_combi
             json.dump(gene_sets, f, indent=2)
 
     # 3. Alignment phase
-    if cfg.joint:
-        logger.info("Executing Joint Alignment Strategy...")
-        aligned_results = joint_align(ref_log, targets, gene_sets, 
-                                      ot_epsilon=cfg.ot_epsilon, ot_tau=cfg.ot_tau, 
-                                      keep_shared_only=cfg.keep_shared_only)
-        for label, (aligned, metadata) in aligned_results.items():
-            results[label] = (aligned, metadata)
-            if cfg.output_dir:
-                tgt_meta = [t[1] for t in targets if t[2] == label][0]
-                final_df = pd.concat([tgt_meta, aligned], axis=1)
-                final_df.to_csv(os.path.join(cfg.output_dir, f"aligned_{label}.csv"))
-                with open(os.path.join(cfg.output_dir, f"metadata_{label}.json"), "w") as f:
-                    json.dump(metadata, f, indent=2)
-
-    elif cfg.merge_order and isinstance(cfg.merge_order, list) and any(isinstance(i, list) for i in cfg.merge_order):
+    if cfg.merge_order and isinstance(cfg.merge_order, list) and any(isinstance(i, list) for i in cfg.merge_order):
         # Hierarchical Tree Mode
         logger.info("Executing Hierarchical Merge Tree...")
         data_map = {t[2]: t for t in targets}
@@ -432,7 +475,8 @@ def execute_pipeline(ref_log, ref_meta, targets, cfg, gene_sets=None, save_combi
             for child_log, child_meta, child_label in children[1:]:
                 aligned, meta = align(anchor_log, child_log, gene_sets, 
                                       cfg.ot_epsilon, cfg.ot_tau, 
-                                      keep_shared_only=cfg.keep_shared_only)
+                                      keep_shared_only=cfg.keep_shared_only,
+                                      use_wls=cfg.wls)
                 resolved_results[child_label] = (pd.concat([child_meta, aligned], axis=1), meta)
                 
                 # Merge into anchor for the next child in this sub-tree (progressive within node)
@@ -466,7 +510,8 @@ def execute_pipeline(ref_log, ref_meta, targets, cfg, gene_sets=None, save_combi
             logger.info(f"Aligning {label} to current reference (Ref Size={len(current_ref_log)})...")
             aligned, metadata = align(current_ref_log, tgt_log, gene_sets, 
                                       cfg.ot_epsilon, cfg.ot_tau, 
-                                      keep_shared_only=cfg.keep_shared_only)
+                                      keep_shared_only=cfg.keep_shared_only,
+                                      use_wls=cfg.wls)
             results[label] = (aligned, metadata)
 
             # Progressive Reference Expansion

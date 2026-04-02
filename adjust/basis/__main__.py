@@ -68,7 +68,7 @@ def setup_args():
     group_wf.add_argument("--merge-order", help="JSON list or tree specifying merge order (e.g., '[\"S1\", \"S2\"]')")
     group_wf.add_argument("--auto-merge", action="store_true", help="Automatically determine optimal merge order based on mass")
     group_wf.add_argument("--progressive", action="store_true", help="Enable progressive reference expansion")
-    group_wf.add_argument("--joint", action="store_true", help="Enable joint alignment of all targets simultaneously")
+    group_wf.add_argument("--wls", action="store_true", help="Use OT-Barycentric Weighted Least Squares instead of ComBat")
     
     return parser.parse_args()
 
@@ -79,7 +79,7 @@ def main():
 
     # Parse merge_order if provided as JSON
     merge_order = None
-    if args.merge_order and not args.joint:
+    if args.merge_order:
         try:
             merge_order = json.loads(args.merge_order)
         except Exception as e:
@@ -93,9 +93,9 @@ def main():
         meta_prefix=args.meta_prefix,
         keep_shared_only=args.keep_shared_only,
         merge_order=merge_order,
-        auto_merge=args.auto_merge and not args.joint,
-        progressive=args.progressive and not args.joint,
-        joint=args.joint,
+        auto_merge=args.auto_merge,
+        progressive=args.progressive,
+        wls=args.wls,
         dedup_threshold=args.dedup_threshold,        d_threshold=args.d_threshold,
         w_floor=args.w_floor,
         top_k_edges=args.top_k_edges,

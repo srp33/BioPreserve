@@ -32,7 +32,7 @@ class BASISConfig:
     merge_order: Any = None
     auto_merge: bool = False
     progressive: bool = False
-    joint: bool = False
+    wls: bool = False
 
     # Deduplication
     dedup_threshold: float = 0.999
