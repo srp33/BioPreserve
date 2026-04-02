@@ -1,7 +1,7 @@
 """Configuration for the BASIS pipeline."""
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Any
 
 
 @dataclass
@@ -27,6 +27,11 @@ class BASISConfig:
     viz: bool = True
     meta_prefix: str = "meta_"
     keep_shared_only: bool = True
+
+    # Advanced Merge Strategies
+    merge_order: Any = None
+    auto_merge: bool = False
+    progressive: bool = False
 
     # Deduplication
     dedup_threshold: float = 0.999
