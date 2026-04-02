@@ -30,12 +30,12 @@ class BASISConfig:
 
     # Deduplication
     dedup_threshold: float = 0.999
+    corr_ceiling: float = 0.99
 
     # Edge computation
     d_threshold: float = 0.5
     w_floor: float = 0.25
     top_k_edges: int = 200
-    corr_ceiling: float = 0.99
 
     # Resolution optimization
     gp_n_calls: int = 25

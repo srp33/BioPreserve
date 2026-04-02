@@ -1,5 +1,5 @@
 """
-BASIS — Biological Alignment via Shared Intersection of Subtypes.
+BASIS — Bulk Alignment of Shared Imbalanced Subpopulations
 
 Usage:
     from basis import preprocess, build_dictionary, align, run_pipeline
