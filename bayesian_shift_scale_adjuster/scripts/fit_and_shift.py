@@ -58,17 +58,27 @@ def _has_converged(trace, rhat_threshold):
     return worst_val <= rhat_threshold, worst_var, worst_val
 
 
-def _extract_posterior_precisions(trace):
+def _extract_posterior_precisions(trace, debug=False):
 
     """Get precisions after the sampling process is completed."""
 
     slopes = trace.posterior["slope"].values.flatten()
     intercepts = trace.posterior["intercept"].values.flatten()
-    samples = np.vstack([slopes, intercepts])
+    
+    # Transform slope to log2. Pending, might fix Mahalanobis non-normality error.
+    log2_slopes = np.log2(slopes)
+    samples = np.vstack([log2_slopes, intercepts])
+    
     mean = np.mean(samples, axis=1)
     cov_matrix = np.cov(samples)
     jitter = np.trace(cov_matrix) * 1e-6 * np.eye(2)
     precision = np.linalg.inv(cov_matrix + jitter)
+
+    if debug:
+        print(f"DEBUG: mean_log2_slope={mean[0]:.4f}, mean_intercept={mean[1]:.4f}")
+        print(f"DEBUG: cov_matrix=\n{cov_matrix}")
+        print(f"DEBUG: precision=\n{precision}")
+
     return mean, precision
 
 
@@ -283,16 +293,23 @@ def _save_params_and_metrics(all_params, all_metrics, params_path, metrics_conve
     pl.DataFrame(metrics_converged).write_csv(metrics_converged_path)
 
 
-def _shift_and_scale(y_test_df, all_params):
+def _shift_and_scale(y_test_df, all_params, debug=False):
 
     """Apply shift and scale to test gene expression using posterior means."""
 
     shifted = {}
     for gene in all_params:
         y = y_test_df[gene].to_numpy()
-        scale = all_params[gene]["test"]["mean"][0]
+        
+        # Exponentiate log2 slope back to linear space. Pending, might fix scaling using wrong units error.
+        scale = 2 ** all_params[gene]["test"]["mean"][0]
         shift = all_params[gene]["test"]["mean"][1]
+        
+        if debug:
+            print(f"DEBUG: gene={gene}, reconstructed_scale={scale:.4f}, shift={shift:.4f}")
+            
         shifted[gene] = (y - shift) / scale
+        
     return pl.DataFrame(shifted)
 
 
