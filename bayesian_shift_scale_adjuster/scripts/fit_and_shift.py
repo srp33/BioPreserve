@@ -29,12 +29,16 @@ class _LoadedData:
     y_train_df: pl.DataFrame
 
 
-def _fit_bayesian_regression(x, y, slope_median, slope_log_sd, intercept_median, intercept_sd, resid_sd, draws, cores=1):
+def _fit_bayesian_regression(x, y, slope_median, slope_log_sd, intercept_median, intercept_sd, resid_sd, draws, cores=1, shift_only_model=False):
 
     """Given the appropriate statistics, fit the Bayesian regression required to compute the shift and scale."""
 
     with pymc.Model():
-        slope = pymc.Lognormal("slope", mu=np.log(slope_median), sigma=slope_log_sd)
+        if shift_only_model:
+            slope = 1.0
+        else:
+            slope = pymc.Lognormal("slope", mu=np.log(slope_median), sigma=slope_log_sd)
+        
         intercept = pymc.Normal("intercept", mu=intercept_median, sigma=intercept_sd)
         epsilon = pymc.HalfNormal("epsilon", sigma=resid_sd)
         mu_y = intercept + slope * x
@@ -62,11 +66,17 @@ def _extract_posterior_precisions(trace, debug=False):
 
     """Get precisions after the sampling process is completed."""
 
-    slopes = trace.posterior["slope"].values.flatten()
+    if "slope" in trace.posterior:
+        slopes = trace.posterior["slope"].values.flatten()
+        log2_slopes = np.log2(slopes)
+    else:
+        # Number of samples = chains * draws
+        n_samples = trace.posterior.dims["chain"] * trace.posterior.dims["draw"]
+        log2_slopes = np.zeros(n_samples)
+
     intercepts = trace.posterior["intercept"].values.flatten()
     
     # Transform slope to log2. Pending, might fix Mahalanobis non-normality error.
-    log2_slopes = np.log2(slopes)
     samples = np.vstack([log2_slopes, intercepts])
     
     mean = np.mean(samples, axis=1)
@@ -93,7 +103,7 @@ def _process_gene_worker(args):
      train_x, train_y, test_x, test_y,
      slope_median, slope_log_sd, intercept_median, intercept_sd,
      train_resid_sd, test_resid_sd,
-     draws, rhat_threshold, max_divergences) = args
+     draws, rhat_threshold, max_divergences, shift_only_model) = args
 
     # Suppress noisy PyMC/pytensor output from worker processes
     logging.getLogger("pymc").setLevel(logging.ERROR)
@@ -104,6 +114,7 @@ def _process_gene_worker(args):
         slope_median=slope_median, slope_log_sd=slope_log_sd,
         intercept_median=intercept_median, intercept_sd=intercept_sd,
         resid_sd=train_resid_sd, draws=draws, cores=1,
+        shift_only_model=shift_only_model,
     )
     train_divergences = int(train_samples.sample_stats["diverging"].sum().values)
 
@@ -112,6 +123,7 @@ def _process_gene_worker(args):
         slope_median=slope_median, slope_log_sd=slope_log_sd,
         intercept_median=intercept_median, intercept_sd=intercept_sd,
         resid_sd=test_resid_sd, draws=draws, cores=1,
+        shift_only_model=shift_only_model,
     )
     test_divergences = int(test_samples.sample_stats["diverging"].sum().values)
 
@@ -196,7 +208,8 @@ def _fit_linear_regression(X_train, y_train, X_test, y_test, gene_names):
 
 
 def _fit_bayesian_regressions(y_train, y_train_pred, y_test, y_test_pred, gene_names,
-                               slope_log_sd, intercept_sd, draws, rhat_threshold, max_divergences, n_jobs=1):
+                               slope_log_sd, intercept_sd, draws, rhat_threshold, max_divergences, n_jobs=1,
+                               shift_only_model=False):
 
     """Fit per-gene Bayesian regressions and return converged posterior parameters.
 
@@ -223,6 +236,7 @@ def _fit_bayesian_regressions(y_train, y_train_pred, y_test, y_test_pred, gene_n
             float(intercept_difference[i]), intercept_sd,
             float(train_residuals_sd[i]), float(test_residuals_sd[i]),
             draws, rhat_threshold, max_divergences,
+            shift_only_model,
         )
         for i, gene in enumerate(gene_names)
     ]
@@ -293,7 +307,7 @@ def _save_params_and_metrics(all_params, all_metrics, params_path, metrics_conve
     pl.DataFrame(metrics_converged).write_csv(metrics_converged_path)
 
 
-def _shift_and_scale(y_test_df, all_params, debug=False):
+def _shift_and_scale(y_test_df, all_params, only_effective_shifts=False, debug=False):
 
     """Apply shift and scale to test gene expression using posterior means."""
 
@@ -302,7 +316,11 @@ def _shift_and_scale(y_test_df, all_params, debug=False):
         y = y_test_df[gene].to_numpy()
         
         # Exponentiate log2 slope back to linear space. Pending, might fix scaling using wrong units error.
-        scale = 2 ** all_params[gene]["test"]["mean"][0]
+        if only_effective_shifts:
+            scale = 1.0
+        else:
+            scale = 2 ** all_params[gene]["test"]["mean"][0]
+            
         shift = all_params[gene]["test"]["mean"][1]
         
         if debug:
@@ -316,6 +334,8 @@ def _shift_and_scale(y_test_df, all_params, debug=False):
 def fit_and_shift(train_path, test_path, params_path, metrics_converged_path,
                   slope_log_sd, intercept_sd, draws, rhat_threshold, max_divergences,
                   n_jobs=1,
+                  only_effective_shifts=False,
+                  shift_only_model=False,
                   X_train_path=None, X_test_path=None, y_train_path=None, y_test_path=None):
 
     """
@@ -344,6 +364,10 @@ def fit_and_shift(train_path, test_path, params_path, metrics_converged_path,
         less strict and recommended for noisy genes.
     n_jobs : int
         Number of parallel workers for per-gene MCMC. -1 uses all CPUs. Default 1.
+    only_effective_shifts : bool
+        If True, only apply shift, not scale.
+    shift_only_model : bool
+        If True, fit a model with only shift (slope fixed to 1).
     X_train_path, X_test_path : str, optional
         Output paths for metadata splits.
     y_train_path, y_test_path : str, optional
@@ -372,9 +396,10 @@ def fit_and_shift(train_path, test_path, params_path, metrics_converged_path,
     all_params = _fit_bayesian_regressions(
         data.y_train, y_train_pred, data.y_test, y_test_pred, data.gene_names,
         slope_log_sd, intercept_sd, draws, rhat_threshold, max_divergences, n_jobs=n_jobs,
+        shift_only_model=shift_only_model,
     )
     _save_params_and_metrics(all_params, all_metrics, params_path, metrics_converged_path)
-    return _shift_and_scale(data.y_test_df, all_params)
+    return _shift_and_scale(data.y_test_df, all_params, only_effective_shifts=only_effective_shifts)
 
 
 def main():
@@ -409,6 +434,8 @@ def main():
     parser.add_argument("--X-test-output", required=True, help="Output path for test metadata CSV.")
     parser.add_argument("--y-train-output", required=True, help="Output path for unadjusted training gene expression CSV.")
     parser.add_argument("--y-test-output", required=True, help="Output path for unadjusted test gene expression CSV.")
+    parser.add_argument("--only-effective-shifts", action="store_true", help="Only apply shift, not scale.")
+    parser.add_argument("--shift-only-model", action="store_true", help="Fit a model with only shift (slope=1).")
     args = parser.parse_args()
 
     y_test_shifted = fit_and_shift(
@@ -416,6 +443,8 @@ def main():
         args.slope_log_sd, args.intercept_sd,
         args.draws, args.rhat_threshold, args.max_divergences,
         n_jobs=args.n_jobs,
+        only_effective_shifts=args.only_effective_shifts,
+        shift_only_model=args.shift_only_model,
         X_train_path=args.X_train_output,
         X_test_path=args.X_test_output,
         y_train_path=args.y_train_output,
