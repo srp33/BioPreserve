@@ -1,53 +1,59 @@
 #!/usr/bin/env Rscript
 
-# generate_pca_plots.R
-# Creates PCA plots after running the ranked_twice adjuster on the data
-# Usage:
-#   TODO: FILL THIS IN LATER
+library(readr)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(patchwork)
 
-suppressPackageStartupMessages({
-    library(readr)
-    library(ggplot2)
-    library(argparse)
-})
+args <- commandArgs(trailingOnly = TRUE)
+ranked_csv <- args[1]
+target_genes <- args[2]
+outdir <- args[3]
 
-# ------------------------ Parse Arguments ---------------------------
-parser <- ArgumentParser()
-parser$add_argument('--train_csv', required=True, help="CSV file of unadjusted training data with metadata and expression.")
-parser$add_argument('--test_csv', required=True, help="CSV file of unadjusted testing data with metadata and expression.")
-parser$add_argument('--target_genes', required=True, help="Selected genes from metadata target")
-parser$add_argument('--outdir', required=True, help="Output directory for PCA plots.")
-parser$add_argument('--adjust_script', default="../../adjust/adjust.R", help="Path to adjust.R, which contains the adjustment methods.")
+# Load adjusted matrix
+ranked <- read_csv(ranked_csv)
+ranked <- as_tibble(ranked)
 
+# Load target genes
+genes <- read_csv(target_genes, show_col_types = FALSE)$Gene
 
-args <- parser$parse_args()
+# Keep target genes + meta_source
+filtered <- ranked %>% select(any_of(c(genes, "meta_source", "meta_er_status")))
 
+# Run PCA
+numeric_data <- filtered %>% 
+    select(where(is.numeric)) %>%
+    select(-starts_with("meta_"))  
+pca_res <- prcomp(numeric_data, scale. = TRUE, center = TRUE)
+scores <- as_tibble(pca_res$x) 
 
-# ------------------------ Source Adjust Functions ----------------------
-source(args$adjust_script)
-set.seed(1)
+# Add meta_source and meta_er_status for grouping
+scores <- scores %>% 
+    mutate(source = filtered$meta_source) %>%
+    mutate(er_status = as.factor(filtered$meta_er_status))
 
-# --------------------------- Helper Functions -----------------------------
-load_csv <- function(filepath) {
-    if (!file.exists(filepath)) stop("Missing file: ", filepath)
-    read_csv(filepath, show_col_types=FALSE)
-    # Returns a tibble
-}
+# Variance explained
+var_exp <- (pca_res$sdev^2) / sum(pca_res$sdev^2)
 
-extract_expression <- function(df) {
-    # Only keep expression columns that are not metadata
-    expression_cols <- df %>% select(where(is.numeric), -starts_with("meta_"))
+# Plot PCA
+p1 <- ggplot(scores, aes(x = PC1, y = PC2, color = er_status, shape = source)) +
+     geom_point(size=2, alpha=0.5) +
+     labs(
+         x = paste0("PC1 (", round(var_exp[1]*100,1), "%)"),
+         y = paste0("PC2 (", round(var_exp[2]*100,1), "%)")
+     ) +
+     theme_minimal()
 
-    if (ncol(expression_cols) == 0) stop("No expression columns found in the dataset.")
-    cat("[info] ", ncol(expression_cols), " expression columns found in the dataset.")
+p2  <- ggplot(scores, aes(x = PC1, y = PC2, color = source, shape = er_status)) +
+     geom_point(size=2, alpha=0.5) +
+     labs(
+         x = paste0("PC1 (", round(var_exp[1]*100,1), "%)"),
+         y = paste0("PC2 (", round(var_exp[2]*100,1), "%)")
+     ) +
+     theme_minimal()
 
-    expression_cols
-}
-
-# --------------------- Main Adjustment ----------------------
-apply_ranked_twice <- function(df) {
-    # Use ranked twice from adjust.R
-    # 
-}
-
-# ------------------ Plot PCA -------------------
+p <- p1 / p2
+# Save
+if(!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
+ggsave(file.path(outdir, "stack_pca_plot.png"), plot = p, width=6, height=4, dpi=300)

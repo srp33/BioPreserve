@@ -754,15 +754,17 @@ rank_normalized <- function(matrix_, dim) {
   if (dim < 1 || dim > 2) {
     stop("Invalid dimension. Must be 1 for rows or 2 for columns.")
   }
-  ranked = apply(matrix_, dim, rank, ties.method = "average")
-  
-  # apply() transposes the result when dim=1, so we need to transpose it back
-  # When dim=1: apply ranks across columns (samples) for each row (feature)
-  # When dim=2: apply ranks across rows (features) for each column (sample)
-  if (dim == 1 && is.matrix(ranked)) {
-    ranked = t(ranked)
+
+  if (dim == 2) {
+    # Rank across columns for each row (samples along rows, genes along columns)
+    ranked <- matrixStats::rowRanks(as.matrix(matrix_), ties.method = "average")
+  } else {
+    # Rank across rows for each column (samples along rows, genes along columns)
+    # Need to transpose, rank rows, then transpose back to keep orientation
+    ranked <- matrixStats::colRanks(as.matrix(matrix_), ties.method = "average", preserveShape=TRUE)
   }
-  
+
+  # Normalize to [0,1]
   return(ranked / max(ranked, na.rm = TRUE))
 }
 
