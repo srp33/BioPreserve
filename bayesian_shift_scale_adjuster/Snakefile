@@ -60,6 +60,9 @@ rule fit_and_shift:
         draws=config["draws"],
         rhat_threshold=config["rhat_threshold"],
         max_divergences=config["max_divergences"],
+    threads: 8
+    resources:
+        mem_mb=16000
     log:
         "logs/fit_and_shift.log"
     shell:
@@ -75,6 +78,7 @@ rule fit_and_shift:
             --draws {params.draws} \
             --rhat-threshold {params.rhat_threshold} \
             --max-divergences {params.max_divergences} \
+            --n-jobs {threads} \
             --X-train-output {output.X_train} \
             --X-test-output {output.X_test} \
             --y-train-output {output.y_train} \
@@ -101,6 +105,9 @@ rule fit_and_shift_effective_only:
         draws=config["draws"],
         rhat_threshold=config["rhat_threshold"],
         max_divergences=config["max_divergences"],
+    threads: 8
+    resources:
+        mem_mb=16000
     log:
         "logs/fit_and_shift_effective_only.log"
     shell:
@@ -116,6 +123,7 @@ rule fit_and_shift_effective_only:
             --draws {params.draws} \
             --rhat-threshold {params.rhat_threshold} \
             --max-divergences {params.max_divergences} \
+            --n-jobs {threads} \
             --only-effective-shifts \
             --X-train-output {output.X_train} \
             --X-test-output {output.X_test} \
@@ -143,6 +151,9 @@ rule fit_and_shift_shift_only_model:
         draws=config["draws"],
         rhat_threshold=config["rhat_threshold"],
         max_divergences=config["max_divergences"],
+    threads: 8
+    resources:
+        mem_mb=16000
     log:
         "logs/fit_and_shift_shift_only_model.log"
     shell:
@@ -158,6 +169,7 @@ rule fit_and_shift_shift_only_model:
             --draws {params.draws} \
             --rhat-threshold {params.rhat_threshold} \
             --max-divergences {params.max_divergences} \
+            --n-jobs {threads} \
             --shift-only-model \
             --X-train-output {output.X_train} \
             --X-test-output {output.X_test} \

@@ -1,0 +1,110 @@
+import sys
+from itertools import combinations as _combinations
+
+configfile: "config.yaml"
+
+PYTHON      = sys.executable   # same interpreter that's running Snakemake
+DATA_DIR    = config["data_dir"]
+RESULTS_DIR = config["results_dir"]
+FIGURES_DIR = config["figures_dir"]
+
+UNADJUSTED = f"{DATA_DIR}/{config['files']['log_transformed']}"
+BAYESIAN_PARAMS = f"{DATA_DIR}/{config['files']['precision_matrix']}"
+
+# Maps adjuster name → data path, e.g. {"bayesian": "data/bayesian-...csv", ...}
+ADJUSTER_FILES = {
+    name: f"{DATA_DIR}/{fname}"
+    for name, fname in config["files"]["adjusters"].items()
+}
+
+# Space-separated NAME:PATH pairs for --adjusters CLI argument
+ADJUSTER_ARGS = " ".join(f"{name}:{path}" for name, path in ADJUSTER_FILES.items())
+
+# Non-bayesian adjusters, derived from config so new entries are picked up automatically
+COMPARATORS = sorted(name for name in ADJUSTER_FILES if name != "bayesian")
+
+# All non-empty subsets of COMPARATORS, keyed by sorted underscore-joined name
+# e.g. {"gmm": ["gmm"], "combat": ["combat"], "combat_gmm": ["combat", "gmm"]}
+COMBO_MAP = {
+    "_".join(sorted(combo)): sorted(combo)
+    for r in range(1, len(COMPARATORS) + 1)
+    for combo in _combinations(COMPARATORS, r)
+}
+
+TOP_N = config["top_n_genes"]
+
+# Output path per combo
+COMBO_FIGURE_PATHS = {
+    combo: f"{FIGURES_DIR}/{len(adjusters)}_adjusters/{combo}.png"
+    for combo, adjusters in COMBO_MAP.items()
+}
+
+
+rule all:
+    input:
+        f"{RESULTS_DIR}/all_adjusters_gene_ranking.csv",
+        list(COMBO_FIGURE_PATHS.values()),
+
+
+rule rank_genes:
+    """
+    Compute per-gene (α, β) and Bayesian-relative Mahalanobis distance for every adjuster.
+
+    For each gene and comparison adjuster, distance is measured between that
+    adjuster's reconstructed (scale, shift) and the reconstructed Bayesian
+    Shift-Scale (scale, shift), weighted by that gene's Bayesian precision matrix.
+    """
+    
+    input:
+        unadjusted=UNADJUSTED,
+        bayesian_params=BAYESIAN_PARAMS,
+        **ADJUSTER_FILES,
+    output:
+        combined  = f"{RESULTS_DIR}/all_adjusters_gene_ranking.csv",
+        distances = f"{RESULTS_DIR}/mahalanobis_distances_wide.csv",
+        scales    = f"{RESULTS_DIR}/scales_wide.csv",
+        shifts    = f"{RESULTS_DIR}/shifts_wide.csv",
+    params:
+        adjuster_args=ADJUSTER_ARGS,
+        output_dir=RESULTS_DIR,
+    shell:
+        """
+        {PYTHON} rank_genes_mahalanobis.py \
+            --unadjusted {input.unadjusted} \
+            --bayesian-params {input.bayesian_params} \
+            --adjusters {params.adjuster_args} \
+            --output-dir {params.output_dir}
+        """
+
+
+rule visualize:
+    """
+    Multi-adjuster comparison figure for every non-empty subset of comparators.
+
+    Style is chosen automatically by visualize.py:
+      - grouped bars  when the subset has ≤4 comparators
+      - heatmap       when the subset has  >4 comparators
+
+    Output filenames encode the subset as a sorted, underscore-joined key,
+    e.g. "combat_gmm.png" for the {combat, gmm} subset, placed in a
+    subdirectory named by the number of comparators (e.g. 2_adjusters/).
+    """
+
+    input:
+        combined=f"{RESULTS_DIR}/all_adjusters_gene_ranking.csv",
+    output:
+        figure=f"{FIGURES_DIR}/{{n}}_adjusters/{{combo}}.png",
+    wildcard_constraints:
+        n=r"\d+",
+    params:
+        adjusters=lambda wc: " ".join(COMBO_MAP[wc.combo]),
+        top_n=TOP_N,
+    shell:
+        """
+        mkdir -p $(dirname {output.figure})
+        {PYTHON} visualize.py \
+            --combined {input.combined} \
+            --adjusters {params.adjusters} \
+            --top-n {params.top_n} \
+            --output {output.figure}
+        """

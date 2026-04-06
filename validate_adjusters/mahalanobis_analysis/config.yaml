@@ -1,0 +1,13 @@
+data_dir: "data"
+results_dir: "results"
+figures_dir: "figures"
+top_n_genes: 15
+
+files:
+  log_transformed: "log_transformed-2_studies-test_metabric.csv"
+  precision_matrix: "precision_matrix.csv"
+  adjusters:
+    basis: "basis-2_studies-test_metabric.csv"
+    bayesian: "bayesian-shift-scale-2_studies-test_metabric.csv"
+    combat:   "combat-2_studies-test_metabric.csv"
+    gmm:      "gmm-2_studies-test_metabric.csv"
