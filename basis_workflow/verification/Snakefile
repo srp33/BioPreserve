@@ -1,0 +1,217 @@
+# Verification Suite Snakefile
+# Included by the main Snakefile. Paths are relative to basis_workflow/
+
+rule verify_all:
+    input:
+        "outputs/plot1_subtypes.png",
+        "outputs/plot2_violins.png",
+        "outputs/plot3_purity.png",
+        "outputs/plot4_edges.png",
+        "outputs/alignment_pca_pc1.png",
+        "outputs/alignment_pca_gmmpost.png",
+        "outputs/full_pca_alignment.png",
+        "outputs/community_pca_alignment.png",
+        "outputs/logs/rule_supervised_eval.txt",
+        "outputs/transport_plan_plots",
+        "outputs/embedding_comparison_plots",
+        "outputs/logs/rule_axis_weighting.txt",
+        "outputs/ablation_gene_correction.md",
+        "outputs/ablation_full_gauntlet.md",
+        "outputs/gamma_lame_fit_unsupervised.png",
+        "outputs/n1_streaming_validation_faceted.png",
+        "outputs/pairwise_n1/comparative_results.csv"
+
+rule rule_validation_suite:
+    input:
+        gene_sets    = "outputs/gene_community_sets.json",
+        dataset_a    = config["dataset_A_path"],
+        dataset_b    = config["dataset_B_path"],
+        edges_a      = "outputs/edges_A.csv",
+        edges_b      = "outputs/edges_B.csv",
+        common_genes = "outputs/common_genes.txt",
+        dup_map      = "outputs/gene_dup_map.csv",
+    output:
+        plot1 = "outputs/plot1_subtypes.png",
+        plot2 = "outputs/plot2_violins.png",
+        plot3 = "outputs/plot3_purity.png",
+        plot4 = "outputs/plot4_edges.png",
+    log:
+        "outputs/logs/rule_validation_suite.log"
+    shell:
+        "{PYTHON} verification/A01_validation_suite.py"
+        " --gene-sets {input.gene_sets}"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --edges-a {input.edges_a}"
+        " --edges-b {input.edges_b}"
+        " --common-genes {input.common_genes}"
+        " --dup-map {input.dup_map}"
+        " --output-dir outputs"
+        " > {log} 2>&1"
+
+
+rule rule_visualize_alignment:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+        aligned   = "outputs/aligned_target_dataset.csv",
+        metadata  = "outputs/basis_metadata.json",
+    output:
+        pca_pc1     = "outputs/alignment_pca_pc1.png",
+        pca_gmmpost = "outputs/alignment_pca_gmmpost.png",
+    log:
+        "outputs/logs/rule_visualize_alignment.log"
+    shell:
+        "{PYTHON} verification/B01_visualize_alignment.py"
+        " --gene-sets {input.gene_sets}"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --aligned {input.aligned}"
+        " --metadata {input.metadata}"
+        " --output-dir outputs"
+        " > {log} 2>&1"
+
+
+rule rule_full_pca:
+    input:
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+        aligned   = "outputs/aligned_target_dataset.csv",
+    output:
+        plot = "outputs/full_pca_alignment.png",
+    log:
+        "outputs/logs/rule_full_pca.log"
+    shell:
+        "{PYTHON} verification/B02_full_pca_plot.py"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --aligned {input.aligned}"
+        " --output {output.plot}"
+        " > {log} 2>&1"
+
+
+rule rule_community_pca:
+    input:
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+        aligned   = "outputs/aligned_target_dataset.csv",
+        gene_sets = "outputs/gene_community_sets.json",
+    output:
+        plot = "outputs/community_pca_alignment.png",
+    log:
+        "outputs/logs/rule_community_pca.log"
+    shell:
+        "{PYTHON} verification/B03_community_pca_plot.py"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --aligned {input.aligned}"
+        " --gene-sets {input.gene_sets}"
+        " --output {output.plot}"
+        " > {log} 2>&1"
+
+
+# --- Additional Verification Scripts ---
+
+rule rule_supervised_eval:
+    input:
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+        aligned   = "outputs/aligned_target_dataset.csv",
+        gene_sets = "outputs/gene_community_sets.json",
+    output:
+        # Script just prints to console, but we can capture log
+        report = "outputs/logs/rule_supervised_eval.txt"
+    shell:
+        "{PYTHON} verification/A02_supervised_eval.py"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --gene-sets {input.gene_sets}"
+        " > {output.report} 2>&1"
+
+rule rule_transport_plan_viz:
+    input:
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+        gene_sets = "outputs/gene_community_sets.json",
+    output:
+        plot = directory("outputs/transport_plan_plots")
+    shell:
+        "{PYTHON} verification/B04_transport_plan_viz.py"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --gene-sets {input.gene_sets}"
+        " --output {output.plot}"
+
+rule rule_embedding_comparison:
+    input:
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+        gene_sets = "outputs/gene_community_sets.json",
+    output:
+        plot = directory("outputs/embedding_comparison_plots")
+    shell:
+        "{PYTHON} verification/C01_embedding_comparison.py"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --gene-sets {input.gene_sets}"
+        " --output {output.plot}"
+
+# Scripts without argparse (Hardcoded paths pointing to outputs/inputs)
+# Snakemake allows us to trigger them easily.
+
+rule rule_axis_weighting:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        edges_a   = "outputs/edges_A.csv",
+        edges_b   = "outputs/edges_B.csv",
+    output:
+        report = "outputs/logs/rule_axis_weighting.txt"
+    shell: 
+        "{PYTHON} verification/C02_axis_weighting_comparison.py > {output.report} 2>&1"
+
+rule rule_latent_interpolation_ablation:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        anchors   = "outputs/invariant_anchors.txt",
+    output:
+        report = "outputs/ablation_gene_correction.md"
+    shell: 
+        "{PYTHON} verification/C03_latent_interpolation_ablation.py"
+
+rule rule_ablation_study:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        anchors   = "outputs/invariant_anchors.txt",
+    output:
+        report = "outputs/ablation_full_gauntlet.md"
+    shell: 
+        "{PYTHON} verification/C04_ablation_study.py"
+
+rule rule_find_gamma:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        anchors   = "outputs/invariant_anchors.txt",
+    output:
+        plot = "outputs/gamma_lame_fit_unsupervised.png"
+    shell: 
+        "{PYTHON} verification/D02_find_gamma.py"
+
+rule rule_test_n1_streaming:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        anchors   = "outputs/invariant_anchors.txt",
+    output:
+        plot = "outputs/n1_streaming_validation_faceted.png"
+    shell: 
+        "{PYTHON} verification/D03_test_n1_streaming.py"
+
+rule rule_systematic_n1_validation:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        anchors   = "outputs/invariant_anchors.txt",
+    output:
+        plot = "outputs/pairwise_n1/comparative_results.csv"
+    shell: 
+        "{PYTHON} verification/D04_systematic_n1_validation.py"
+

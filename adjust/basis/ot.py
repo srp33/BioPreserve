@@ -7,7 +7,7 @@ import scipy.special as sp
 EPS = 1e-8
 
 
-def sinkhorn_uot(X_embed, Y_embed, ot_epsilon=0.01, ot_tau=0.1, return_plan=False):
+def sinkhorn_uot(X_embed, Y_embed, ot_epsilon=0.01, ot_tau=0.1):
     """Run Sinkhorn UOT, return (w_ref, w_tgt, intersection_mass).
 
     Parameters
@@ -18,8 +18,6 @@ def sinkhorn_uot(X_embed, Y_embed, ot_epsilon=0.01, ot_tau=0.1, return_plan=Fals
         Entropy regularization (lower = sharper).
     ot_tau : float
         Mass relaxation (lower = more willing to destroy unmatched mass).
-    return_plan : bool
-        If True, also return the full transport plan matrix P.
     """
     N_ref, N_tgt = X_embed.shape[0], Y_embed.shape[0]
     C = dist.cdist(X_embed, Y_embed, metric="sqeuclidean")
@@ -40,6 +38,4 @@ def sinkhorn_uot(X_embed, Y_embed, ot_epsilon=0.01, ot_tau=0.1, return_plan=Fals
     P = np.exp((-C / ot_epsilon) + f[:, None] + g[None, :])
     w_ref = np.sum(P, axis=1) * N_ref
     w_tgt = np.sum(P, axis=0) * N_tgt
-    if return_plan:
-        return w_ref, w_tgt, float(np.sum(P)), P
     return w_ref, w_tgt, float(np.sum(P))

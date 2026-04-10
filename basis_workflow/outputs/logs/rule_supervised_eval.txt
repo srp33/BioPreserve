@@ -1,0 +1,23 @@
+
+--- Dataset A Details ---
+  Best ER Axis:   axis_49 (AUC=0.913)
+  2nd ER Axis:    axis_3 (AUC=0.870)
+  Best HER2 Axis: axis_30 (AUC=0.931)
+  2nd HER2 Axis:  axis_7 (AUC=0.707)
+  ER Axis Genes:   CFAP69(1.00), MAPT(1.00), IFT46(1.00), THSD4(1.00), IGFBP4(1.00)
+  HER2 Axis Genes: STARD3(1.00), GRB7(1.00), PGAP3(0.97), ERBB2(0.91), CDK12(0.88)
+
+--- Dataset B Details ---
+  Best ER Axis:   axis_49 (AUC=0.925)
+  2nd ER Axis:    axis_16 (AUC=0.860)
+  Best HER2 Axis: axis_30 (AUC=0.893)
+  2nd HER2 Axis:  axis_22 (AUC=0.667)
+  ER Axis Genes:   CFAP69(1.00), MAPT(1.00), IFT46(1.00), THSD4(1.00), IGFBP4(1.00)
+  HER2 Axis Genes: STARD3(1.00), GRB7(1.00), PGAP3(0.97), ERBB2(0.91), CDK12(0.88)
+
+--- Supervised Separation Summary ---
+Dataset  Max_ER_AUC  Max_HER2_AUC  ER_Redundancy  HER2_Redundancy  Best_Axes_Corr  Avg_Purity  N_Axes
+      A    0.912769      0.931227              5                1        0.054308    0.576146      52
+      B    0.924958      0.893012              6                1        0.020754    0.623474      52
+
+Overall Separation Score: 0.5830
