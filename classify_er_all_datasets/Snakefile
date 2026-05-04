@@ -84,26 +84,23 @@ rule aggregate_metrics:
 rule classify:
     priority: 80
     input:
-        adjusted_csv = DATA_FOLDER + "/adjusted_data/{adjuster}/{adjuster}_{k}studies_test_{test_source}.csv"
+        adjusted_csv = DATA_FOLDER + "/adjusted_data/{adjuster}/{adjuster}-{k}_studies-test_{test_source}.csv"
     output: 
-        metrics_file = DATA_FOLDER + "/classify_metrics/{adjuster}/{adjuster}_{k}studies_test_{test_source}_chunk{chunk}_metrics.csv"
+        metrics_file = DATA_FOLDER + "/classify_metrics/{adjuster}/{adjuster}-{k}_studies-test_{test_source}-metrics.csv"
     log: 
-        "log/classify/{adjuster}_{k}_{test_source}_chunk{chunk}.log"
+        "log/classify/{adjuster}_{k}_{test_source}.log"
     resources: 
         mem_mb=16000,
         runtime=360
     threads: 1
     params:
-        output_dir = DATA_FOLDER + "/classify_metrics",
-        bootstrap = BOOTSTRAP_PER_JOB
+        output_dir = DATA_FOLDER + "/classify_metrics"
     shell:
         r"""
         set -euo pipefail
         python {SCRIPTS_DIR}/run_classifier.py \
             --csv {input.adjusted_csv} \
             --outdir {params.output_dir} \
-            --chunk {wildcards.chunk} \
-            --chunk-size {params.bootstrap} \
             &> {log}
         """
 
@@ -114,7 +111,7 @@ rule adjust:
     output: 
         DATA_FOLDER + "/adjusted_data/{adjuster}/{adjuster}_{k}studies_test_{test_source}.csv"
     resources: 
-        mem_mb=24000,
+        mem_mb=28000,
         runtime=90
     threads: 1
     log: 
@@ -206,43 +203,6 @@ rule make_order_files:
             --output {output.order_file} \
             &> {log}
         """
-
-rule all_feature_importance:
-    input:
-        expand(
-            DATA_FOLDER + "/feature_importance/{adjuster}/{adjuster}_{k}studies_test_{test_source}_importance.csv",
-            adjuster=config["adjuster"],
-            k=K_VALUES,
-            test_source=config["dataset_ids"]
-        )
-
-rule feature_importance:
-    input:
-        csv=DATA_FOLDER + "/adjusted_data/{adjuster}/{adjuster}_{k}studies_test_{test_source}.csv",
-        script=SCRIPTS_DIR + "/classify_feature_importance.py"
-    output:
-        DATA_FOLDER + "/feature_importance/{adjuster}/{adjuster}_{k}studies_test_{test_source}_importance.csv"
-    params:
-        metric=config.get("feature_importance_metric", "roc_auc"),
-        outdir=DATA_FOLDER + "/feature_importance/{adjuster}"
-    resources:
-        mem_mb=16000,
-        runtime=600
-    threads: 4
-    log:
-        "log/features/{adjuster}_{k}_{test_source}_features.log"
-    shell:
-        """
-        set -euo pipefail
-        mkdir -p {params.outdir}
-        python {input.script} \
-            --csv {input.csv} \
-            --outdir {params.outdir} \
-            --metric {params.metric} \
-            --n_jobs {threads} \
-            &> {log}
-        """
-
 
 rule summarize_gold:
     input:

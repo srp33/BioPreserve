@@ -5,7 +5,7 @@ data_folder: "/grphome/grp_batch_effects/data"
 scripts_dir: "."
 adjust_script: "../../adjust/adjust.R"
 
-adjuster: ["gmm", "min_mean", "naive", "log_combat", "log_transformed"] # mnn
+adjuster: ["gmm", "min_mean", "mnn", "combat", "supervised_combat", "log_transformed"]
 dataset_ids:
   - "gse19615"
   - "gse20194"
@@ -27,8 +27,4 @@ bootstrap_total: 100
 bootstrap_per_job: 10
 n_hvg: 1000
 k_folds: 3
-k_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # Number of studies to use in training
-
-
-# Feature importance settings
-feature_importance_metric: "roc_auc"  # Metric to use for permutation importance
+k_values: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # Number of studies to use in training

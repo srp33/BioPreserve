@@ -13,23 +13,6 @@ library(patchwork)
 library(argparse)
 library(tidytext)
 
-# --- Helper Functions ---
-
-# Clean metrics dataframe
-clean_metrics <- function(df) {
-  df %>%
-    mutate(
-      n_studies = as.numeric(str_extract(subset_file, "(\\d+)(?=studies)")),
-      test_source = tolower(test_source)
-    )
-}
-
-# Clean metadata dataframe
-clean_metadata <- function(df) {
-  df %>% mutate(gse_id = tolower(trimws(gse_id)),
-                technology = factor(technology))
-}
-
 # Calculate delta vs unadjusted
 compute_delta <- function(df_adj, df_unadj, metric_col) {
   adj <- df_adj %>%
@@ -106,7 +89,8 @@ generate_plot <- function(df_plot, metric_col, facet_labels, cv_value = NULL) {
     geom_errorbar(aes(ymin = mean_val - se_val, ymax = mean_val + se_val),
                   width = 0.2) +
     scale_x_reordered(labels = function(x) {
-      gsub("__.*$", "", x) %>% { df_plot$train_label[.] }
+      cleaned <- gsub("__.*$", "", x)
+      df_plot$train_label[cleaned]
     }) +
     facet_wrap(~ test_source, scales = "free_x", labeller = labeller(test_source = facet_labels)) +
     labs(
@@ -132,18 +116,44 @@ generate_plot <- function(df_plot, metric_col, facet_labels, cv_value = NULL) {
 # Get CV value for a metric
 get_cv_value <- function(cv_data, test_source, metric) {
   if (is.null(cv_data)) return(NULL)
-  row <- cv_data %>% filter(test_source == !!test_source)
+  row <- cv_data %>% filter(.data$test_source == test_source)
   if (nrow(row) == 0 || !(metric %in% colnames(row))) return(NULL)
   row[[metric]][1]
 }
 
 # --- Main Processing ---
-main <- function(metrics_file, metadata_file, order_folder, figures_dir, cv_file = NULL) {
+main <- function(metrics_file, metadata_file, order_folder, figures_dir, cv_file = NULL, adjusters_to_drop = NULL) {
   
   dir.create(figures_dir, showWarnings = FALSE, recursive = TRUE)
   
-  all_metrics <- read_csv(metrics_file, show_col_types = FALSE) %>% clean_metrics()
-  gse_metadata <- read_csv(metadata_file, show_col_types = FALSE) %>% clean_metadata()
+  all_metrics <- read_csv(metrics_file, show_col_types = FALSE) %>% mutate(n_studies = k)
+  
+  if (!is.null(adjusters_to_drop)) {
+    adjusters_to_drop <- strsplit(adjusters_to_drop, ",")[[1]] %>% 
+      trimws()
+    unknown <- setdiff(adjusters_to_drop, unique(all_metrics$adjuster))
+    if (length(unknown) > 0) {
+      warning("Unknown adjusters: ", paste(unknown, collapse = ", "))
+    }
+    all_metrics <- all_metrics %>% 
+      filter(!adjuster %in% adjusters_to_drop)
+  }
+  
+  # DEBUG: Ensure required columns
+  required_cols <- c("adjuster", "k", "test_source")
+  missing <- setdiff(required_cols, colnames(all_metrics))
+  if (length(missing) > 0) {
+    stop(paste("Missing required columns:", paste(missing, collapse, ",")))
+  }
+
+  gse_metadata <- read_csv(metadata_file, show_col_types = FALSE) %>%
+  mutate(
+    gse_id = tolower(trimws(gse_id)),
+    technology = factor(technology)
+  )
+
+  # DEBUG: Check adjusters
+  print(unique(all_metrics$adjuster))
   df_unadj <- all_metrics %>% filter(adjuster == "log_transformed")
   all_adjusters <- all_metrics %>% filter(adjuster != "log_transformed")
   
@@ -188,7 +198,8 @@ parser$add_argument('--figures_dir', required = TRUE, help = "Directory to save 
 parser$add_argument('--metadata_file', required = TRUE, help = "Path to CSV containing dataset metadata")
 parser$add_argument('--cv_file', required = FALSE, default = NULL, help = "Path to CSV containing CV metrics")
 parser$add_argument('--order_folder', required = TRUE, help = "Folder containing training order files")
+parser$add_argument('--adjusters_to_drop', default=NULL, help = "Graphing partial results")
 args <- parser$parse_args()
 
 # --- Run main ---
-main(args$metrics_file, args$metadata_file, args$order_folder, args$figures_dir, args$cv_file)
+main(args$metrics_file, args$metadata_file, args$order_folder, args$figures_dir, args$cv_file, args$adjusters_to_drop)

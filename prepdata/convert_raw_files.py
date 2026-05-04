@@ -323,11 +323,36 @@ def process_dataset(raw_folder_path: Path, dataset_id: str, output_base_dir: Pat
         # Lowercase all values in relevant columns
         meta_df[cols_to_convert] = meta_df[cols_to_convert].apply(lambda col: col.astype(str).str.lower())
 
-        df = map_column_with_regex(df, 'meta_her2_status_combined', [
+        def map_column_with_regex(df, column_name, patterns_to_values):
+            if column_name not in df.columns:
+                print(f"⚠️ Column {column_name} not found, skipping regex mapping")
+                return df
+
+            def map_value(val):
+                if pd.isnull(val):
+                    return np.nan
+                
+                if isinstance(val, (int, float)):
+                    if val in [0, 1]:
+                        return val
+                    else:
+                        return np.nan
+                    
+                val_str = str(val).lower().strip()
+                for pattern, mapped_val in patterns_to_values:
+                    if re.search(pattern, val_str):
+                        return mapped_val
+                return np.nan
+
+            df[column_name] = df[column_name].apply(map_value)
+            return df
+        
+        meta_df = map_column_with_regex(meta_df, 'meta_her2_status', [
             (r"equivocal", np.nan),
             (r"her2-|negative", 0),
             (r"her2\+|positive", 1)
         ])
+
         def status_to_binary(val):
             if pd.isnull(val):
                 return np.nan 
@@ -345,8 +370,8 @@ def process_dataset(raw_folder_path: Path, dataset_id: str, output_base_dir: Pat
                 pass
 
             # Match full strings
-            positive_vals = {'positive', 'gain', 'p', 'pos', 'pos-low', '1', '2', '3', 'er+', 'he+', 'pr+', 'pgr+'}
-            negative_vals = {'negative', 'loss', 'n', 'neg', '0', 'er-', 'he-', 'pr-', 'pgr-'}
+            positive_vals = {'positive', 'p', 'pos', 'pos-low', '1', '2', '3', 'er+', 'he+', 'pr+', 'pgr+'}
+            negative_vals = {'negative', 'n', 'neg', '0', 'er-', 'he-', 'pr-', 'pgr-'}
 
             if val in positive_vals:
                 return 1

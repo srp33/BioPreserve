@@ -13,7 +13,7 @@ def main(metrics_dir, output_file):
             print(f"⚠️  Adjuster directory {adj_dir} does not exist, skipping.")
             continue
 
-        for csv_file in adj_path.glob("*_metrics.csv"):
+        for csv_file in adj_path.glob("*-metrics.csv"):
             try:
                 df = pd.read_csv(csv_file)
                 # Add a column indicating the adjuster
