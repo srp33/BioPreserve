@@ -8,7 +8,6 @@ consensus Leiden + HITS → greedy merge + ghost gene pruning.
 import logging
 import json
 import sys
-import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -25,11 +24,11 @@ logger = logging.getLogger(__name__)
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_dataset(csv_path, meta_prefix="meta_"):
+def load_dataset(csv_path):
     """Load CSV, keep only numeric non-meta_* columns."""
     df = pd.read_csv(csv_path, index_col=0, low_memory=False)
     df = df.select_dtypes(include=[np.number])
-    meta_cols = [c for c in df.columns if c.startswith(meta_prefix)]
+    meta_cols = [c for c in df.columns if c.startswith("meta_")]
     if meta_cols:
         df = df.drop(columns=meta_cols)
     return df
@@ -119,28 +118,16 @@ def pooled_dedup(datasets, dedup_threshold=0.999):
 def compute_edges(log_df, common_genes, d_threshold=0.5, w_floor=0.25,
                   top_k=200, corr_ceiling=0.99):
     """Compute GMM-weighted Cohen's d edges for one dataset."""
-    try:
-        import gmm_adjust
-    except ImportError:
-        # Fallback: look in parent directory (adjust/)
-        import sys
-        parent_dir = str(Path(__file__).resolve().parent.parent)
-        if parent_dir not in sys.path:
-            sys.path.append(parent_dir)
-        import gmm_adjust
+    import basis.gmm_adjust as gmm_adjust
 
     df = log_df[common_genes]
     data_array = df.values.T  # (n_genes, n_samples)
-    n_samples = df.shape[0]
 
     # Fit GMM (gmm_adjust handles its own log transform, pass raw)
     # Actually we already log-transformed, so pass with log_transform=False
-    logger.info(f"  Fitting GMM responsibilities for {len(common_genes)} genes x {n_samples} samples...")
-    gmm_start = time.perf_counter()
     gmm_result = gmm_adjust.get_gmm_responsibilities(
         data_array, genes_are_rows=True, log_transform=False
     )
-    logger.info(f"  GMM responsibilities complete in {time.perf_counter() - gmm_start:.1f}s")
     resp_lower, resp_upper = gmm_result["responsibilities"]
 
     gene_names = df.columns.tolist()
@@ -159,15 +146,10 @@ def compute_edges(log_df, common_genes, d_threshold=0.5, w_floor=0.25,
 
     edges = []
     BATCH = 500
-    n_batches = (n_genes + BATCH - 1) // BATCH
-    loop_start = time.perf_counter()
     for b_start in range(0, n_genes, BATCH):
         b_end = min(b_start + BATCH, n_genes)
-        batch_num = (b_start // BATCH) + 1
         batch_valid = valid_anchor[b_start:b_end]
-        logger.info(f"  Edge batch {batch_num}/{n_batches}: genes {b_start + 1}-{b_end} of {n_genes}")
         if not batch_valid.any():
-            logger.info(f"    Batch {batch_num}/{n_batches} skipped: no valid anchors")
             continue
 
         w0 = resp_lower[b_start:b_end]
@@ -207,12 +189,6 @@ def compute_edges(log_df, common_genes, d_threshold=0.5, w_floor=0.25,
             src = gene_names[i]
             for j, w in zip(kept_idx, kept_w):
                 edges.append((src, gene_names[j], float(w)))
-
-        elapsed = time.perf_counter() - loop_start
-        logger.info(
-            f"    Batch {batch_num}/{n_batches} complete: accumulated {len(edges)} edges "
-            f"after {elapsed:.1f}s"
-        )
 
     logger.info(f"  Computed {len(edges)} edges")
     return pd.DataFrame(edges, columns=["source", "target", "weight"])

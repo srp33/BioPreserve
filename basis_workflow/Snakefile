@@ -1,0 +1,206 @@
+configfile: "config.yaml"
+
+PYTHON = "uv run python"
+
+# Wildcard mapping for Rule 1: per-dataset edge computation
+DATASETS = {"A": config["dataset_A_path"], "B": config["dataset_B_path"]}
+
+rule all:
+    input:
+        "outputs/aligned_target_dataset.csv",
+        "outputs/basis_metadata.json"
+
+include: "verification/Snakefile"
+
+rule rule_00_pooled_dedup:
+    input:
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+    output:
+        genes   = "outputs/common_genes.txt",
+        dup_map = "outputs/gene_dup_map.csv",
+    params:
+        dedup_threshold = config["dedup_threshold"],
+    log:
+        "outputs/logs/rule_00_pooled_dedup.log"
+    shell:
+        "{PYTHON} scripts/00_pooled_dedup.py"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --dedup-threshold {params.dedup_threshold}"
+        " --output-genes {output.genes}"
+        " --output-dup-map {output.dup_map}"
+        " > {log} 2>&1"
+
+
+rule rule_02_compute_edges:
+    input:
+        dataset      = lambda wc: DATASETS[wc.dataset_label],
+        common_genes = "outputs/common_genes.txt",
+        dup_map      = "outputs/gene_dup_map.csv",
+    output:
+        edges = "outputs/edges_{dataset_label}.csv",
+    params:
+        top_k        = config["top_k_edges"],
+        corr_ceiling = config["corr_ceiling"],
+    log:
+        "outputs/logs/rule_02_compute_edges_{dataset_label}.log"
+    shell:
+        "{PYTHON} scripts/02_compute_edges.py"
+        " --dataset {input.dataset}"
+        " --common-genes {input.common_genes}"
+        " --dup-map {input.dup_map}"
+        " --top-k {params.top_k}"
+        " --corr-ceiling {params.corr_ceiling}"
+        " --output {output.edges}"
+        " > {log} 2>&1"
+
+
+rule rule_03_merge_graphs:
+    input:
+        edges_a = "outputs/edges_A.csv",
+        edges_b = "outputs/edges_B.csv",
+    output:
+        edges   = "outputs/ttest_edges.csv",
+        graphml = "outputs/igraph_structure.graphml",
+    params:
+        use_mknn = "--use-mknn" if config.get("use_mknn", False) else "",
+        directed = "--directed" if config.get("use_directed_graph", True) else "",
+    log:
+        "outputs/logs/rule_03_merge_graphs.log"
+    shell:
+        "{PYTHON} scripts/03_merge_graphs.py"
+        " --edges-a {input.edges_a}"
+        " --edges-b {input.edges_b}"
+        " {params.use_mknn}"
+        " {params.directed}"
+        " --output-edges {output.edges}"
+        " --output-graphml {output.graphml}"
+        " > {log} 2>&1"
+
+
+rule rule_04_optimize_resolution:
+    input:
+        graphml      = "outputs/igraph_structure.graphml",
+        dataset_a    = config["dataset_A_path"],
+        dataset_b    = config["dataset_B_path"],
+        common_genes = "outputs/common_genes.txt",
+    output:
+        history    = "outputs/gp_optimization_history.csv",
+        resolution = "outputs/optimal_resolution.txt",
+    params:
+        gp_n_calls    = config["gp_n_calls"],
+        res_range_min = config["res_range_min"],
+        res_range_max = config["res_range_max"],
+    log:
+        "outputs/logs/rule_04_optimize_resolution.log"
+    shell:
+        "{PYTHON} scripts/04_optimize_resolution.py"
+        " --graphml {input.graphml}"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --common-genes {input.common_genes}"
+        " --gp-n-calls {params.gp_n_calls}"
+        " --res-range-min {params.res_range_min}"
+        " --res-range-max {params.res_range_max}"
+        " --output-history {output.history}"
+        " --output-resolution {output.resolution}"
+        " > {log} 2>&1"
+
+
+rule rule_05_diffusion_communities:
+    input:
+        graphml      = "outputs/igraph_structure.graphml",
+        edges_csv    = "outputs/ttest_edges.csv",
+        common_genes = "outputs/common_genes.txt",
+        dup_map      = "outputs/gene_dup_map.csv",
+        resolution   = "outputs/optimal_resolution.txt",
+    output:
+        communities = "outputs/gene_communities.csv",
+        hits        = "outputs/pre_merge_hits_weights.json",
+    params:
+        hub_threshold       = config.get("hub_threshold", 0.5),
+        diffusion_alpha     = config.get("diffusion_alpha", 0.8),
+        diffusion_threshold = config.get("diffusion_threshold", 0.15),
+    log:
+        "outputs/logs/rule_05_diffusion_communities.log"
+    shell:
+        "{PYTHON} scripts/05_diffusion_communities.py"
+        " --graphml {input.graphml}"
+        " --edges-csv {input.edges_csv}"
+        " --common-genes {input.common_genes}"
+        " --dup-map {input.dup_map}"
+        " --resolution $(cat {input.resolution})"
+        " --hub-threshold {params.hub_threshold}"
+        " --diffusion-alpha {params.diffusion_alpha}"
+        " --diffusion-threshold {params.diffusion_threshold}"
+        " --output-communities {output.communities}"
+        " --output-hits {output.hits}"
+        " > {log} 2>&1"
+
+
+rule rule_06_build_dictionary:
+    input:
+        communities  = "outputs/gene_communities.csv",
+        hits_weights = "outputs/pre_merge_hits_weights.json",
+        dataset_a    = config["dataset_A_path"],
+        dataset_b    = config["dataset_B_path"],
+        common_genes = "outputs/common_genes.txt",
+    output:
+        gene_sets = "outputs/gene_community_sets.json",
+    params:
+        gmm_fuzzy_threshold  = config.get("gmm_fuzzy_threshold", 0.0),
+    log:
+        "outputs/logs/rule_06_build_dictionary.log"
+    shell:
+        "{PYTHON} scripts/06_build_dictionary.py"
+        " --communities {input.communities}"
+        " --hits-weights {input.hits_weights}"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --common-genes {input.common_genes}"
+        " --gmm-fuzzy-threshold {params.gmm_fuzzy_threshold}"
+        " --output {output.gene_sets}"
+        " > {log} 2>&1"
+
+
+rule rule_07_basis_align:
+    input:
+        gene_sets = "outputs/gene_community_sets.json",
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+        anchors   = "outputs/invariant_anchors.txt",
+    output:
+        aligned  = "outputs/aligned_target_dataset.csv",
+        metadata = "outputs/basis_metadata.json",
+    params:
+        alignment_method = config["alignment_method"],
+    log:
+        "outputs/logs/rule_07_basis_align.log"
+    shell:
+        "{PYTHON} scripts/07_basis_align.py"
+        " --gene-sets {input.gene_sets}"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --anchors {input.anchors}"
+        " --output-aligned {output.aligned}"
+        " --output-metadata {output.metadata}"
+        " > {log} 2>&1"
+
+
+rule rule_01_find_anchors:
+    input:
+        dataset_a = config["dataset_A_path"],
+        dataset_b = config["dataset_B_path"],
+    output:
+        anchors = "outputs/invariant_anchors.txt",
+    log:
+        "outputs/logs/rule_01_find_anchors.log"
+    shell:
+        "{PYTHON} scripts/01_find_anchors.py"
+        " --dataset-a {input.dataset_a}"
+        " --dataset-b {input.dataset_b}"
+        " --output {output.anchors}"
+        " > {log} 2>&1"
+
+

@@ -1,7 +1,7 @@
 """Configuration for the BASIS pipeline."""
 
 from dataclasses import dataclass, field
-from typing import List, Any
+from typing import List
 
 
 @dataclass
@@ -25,23 +25,15 @@ class BASISConfig:
     # Output
     output_dir: str = ""
     viz: bool = True
-    meta_prefix: str = "meta_"
-    keep_shared_only: bool = True
-
-    # Advanced Merge Strategies
-    merge_order: Any = None
-    auto_merge: bool = False
-    progressive: bool = False
-    wls: bool = False
 
     # Deduplication
     dedup_threshold: float = 0.999
-    corr_ceiling: float = 0.99
 
     # Edge computation
     d_threshold: float = 0.5
     w_floor: float = 0.25
     top_k_edges: int = 200
+    corr_ceiling: float = 0.99
 
     # Resolution optimization
     gp_n_calls: int = 25

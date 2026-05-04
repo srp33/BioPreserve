@@ -15,3 +15,4 @@ prepdata/logs
 .snakemake
 *.csv
 *.json
+.Rproj.user

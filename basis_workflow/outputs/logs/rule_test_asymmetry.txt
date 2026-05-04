@@ -1,0 +1,15 @@
+Testing on ER Axis: axis_50
+Biased ER- cohort: 71 samples
+Biased ER+ cohort: 250 samples
+
+--- RESULTS: COMPARISON OF BIASED COHORTS ---
+Reference ER+ Mean: 4.848
+Reference ER- Mean: 2.343
+--------------------------------------------------
+Target (All ER-) Column-Std Mean: -0.000
+Target (All ER+) Column-Std Mean: 0.000  <-- PARADOX (Identical to ER-!)
+--------------------------------------------------
+Target (All ER-) Anchor-Std Mean: 4.958 (Lower than threshold)
+Target (All ER+) Anchor-Std Mean: 10.580 (Higher than threshold)
+
+Population Midpoint Threshold: 3.596

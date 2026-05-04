@@ -1,0 +1,31 @@
+dataset_A_path: "inputs/gse20194.csv"
+dataset_B_path: "inputs/gse58644.csv"
+output_dir: "outputs"
+
+# Rule 0: Deduplication
+dedup_threshold: 0.999
+
+# Rule 1: Edge computation
+corr_ceiling: 0.99
+top_k_edges: 200
+
+# Rule 2: Merge Graphs
+use_mknn: true
+use_directed_graph: true
+
+# Rule 3: GP optimization
+gp_n_calls: 40
+res_range_min: 1.0
+res_range_max: 200.0
+
+# Rule 4: Disjoint Core + Diffusion Satellites
+hub_threshold: 0.5
+diffusion_alpha: 0.8
+diffusion_threshold: 0.15
+
+# Rule 5: Dictionary construction
+gmm_fuzzy_threshold: 0.0
+
+# Rule 6: BASIS alignment
+alignment_method: "optimal_transport"
+ot_tau: 0.9
