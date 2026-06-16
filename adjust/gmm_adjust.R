@@ -106,9 +106,9 @@ update_variance_coupled <- function(data, means, responsibilities, Nk, variance_
 #' @param max_iter Maximum EM iterations
 #' @param tol Convergence tolerance
 #' @return List with means, variances, weights matrices [n_genes × 2]
-fit_gmm_batch <- function(data_chunk, weight_alpha = NULL, variance_alpha = NULL, 
+fit_gmm_batch <- function(data_chunk, weight_alpha = NULL, variance_alpha = NULL,
                          hyperprior_strength = NULL, hyperprior_decay_rate = NULL,
-                         max_iter = 100, tol = 1e-6) {
+                         max_iter = 100, tol = 1e-4) {
   # data_chunk is [n_genes × n_samples]
   n_genes <- nrow(data_chunk)
   n_samples <- ncol(data_chunk)
@@ -173,17 +173,13 @@ fit_gmm_batch <- function(data_chunk, weight_alpha = NULL, variance_alpha = NULL
     resp_k1 <- pdf_k1 / pdf_sums
     resp_k2 <- pdf_k2 / pdf_sums
     
-    # Transpose for compatibility with M-step [n_samples × n_active]
-    resp_k1_t <- t(resp_k1)
-    resp_k2_t <- t(resp_k2)
-    
     # ========================================================================
     # VECTORIZED M-STEP: Update parameters for all active genes
     # ========================================================================
-    
-    # Compute Nk for all genes [n_active × K]
-    Nk1 <- colSums(resp_k1_t)
-    Nk2 <- colSums(resp_k2_t)
+
+    # Compute Nk for all genes [n_active]
+    Nk1 <- rowSums(resp_k1)
+    Nk2 <- rowSums(resp_k2)
     
     variances_old <- variances[active_genes, , drop = FALSE]
     
@@ -334,8 +330,8 @@ bimodal_normalize <- function(data, weight_alpha=NULL, variance_alpha=NULL, hype
   
   # Vectorized log transform
   if (log_transform) {
-    row_mins <- apply(data, 1, min, na.rm = TRUE)
-    data <- log(sweep(data, 1, row_mins, "-") + 1)
+    row_mins <- matrixStats::rowMins(data, na.rm = TRUE)
+    data <- log(data - row_mins + 1)
   }
   
   # Vectorized variance calculation (faster than apply)

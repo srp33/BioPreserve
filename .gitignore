@@ -16,3 +16,5 @@ prepdata/logs
 *.csv
 *.json
 .Rproj.user
+classify_er_all_datasets/figures
+classify_er_all_datasets/outputs

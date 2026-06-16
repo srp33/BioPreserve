@@ -93,6 +93,6 @@ for test_source in df['meta_source'].unique():
 
 
 baseline_df = pd.DataFrame(results)
-full_path = Path(output_dir) / "cv_metrics.csv"
+full_path = Path(output_dir) / "cv_metrics.csv.gz"
 baseline_df.to_csv(full_path, index=False)
 print("Saved basline CV metrics: ", baseline_df, "to ", full_path)

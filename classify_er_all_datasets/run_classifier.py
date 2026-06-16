@@ -13,7 +13,7 @@ print = functools.partial(print, flush=True)
 # Filename parsing
 # -------------------------
 def parse_filename(filename):
-    basename = os.path.basename(filename).replace(".csv", "")
+    basename = os.path.basename(filename).replace(".csv.gz", "").replace(".csv", "")
 
     pattern = r"^(?P<adjuster>.+)-(?P<n>\d+)_studies-test_(?P<test>.+)$"
     match = re.match(pattern, basename)
@@ -126,7 +126,7 @@ def main():
 
     out_file = os.path.join(
         out_dir,
-        f"{os.path.basename(args.csv).replace('.csv','')}-metrics.csv"
+        f"{os.path.basename(args.csv).replace('.csv.gz','').replace('.csv','')}-metrics.csv.gz"
     )
 
     pd.DataFrame([metrics]).to_csv(out_file, index=False)

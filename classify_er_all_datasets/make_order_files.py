@@ -54,7 +54,7 @@ def main():
             "train_source": train_source
         })
 
-        out_file = os.path.join(output_dir, f"{test_source}_order.csv")
+        out_file = os.path.join(output_dir, f"{test_source}_order.csv.gz")
 
         # Write CSV
         out_df.to_csv(out_file, index=False)

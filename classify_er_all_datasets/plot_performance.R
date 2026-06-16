@@ -184,7 +184,7 @@ main <- function(metrics_file, metadata_file, order_folder, figures_dir, cv_file
     plot_prep <- prepare_plot_data(plot_metrics, "mean_metric", gse_metadata, order_list)
     p <- generate_plot(plot_prep$df_plot, metric, plot_prep$facet_labels, cv_value)
     
-    ggsave(file.path(figures_dir, paste0("scaling_", metric, ".png")), p, width = 12, height = 8)
+    ggsave(file.path(figures_dir, paste0("my_scaling_", metric, ".png")), p, width = 12, height = 8)
   }
   
   write_csv(results, file.path(figures_dir, "scaling_comparison_results.csv"))

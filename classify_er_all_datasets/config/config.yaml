@@ -1,11 +1,11 @@
 # config.yaml
 
-output_folder: "/grphome/grp_batch_effects/outputs"
-data_folder: "/grphome/grp_batch_effects/data"
-scripts_dir: "."
-adjust_script: "../../adjust/adjust.R"
+output_folder: "/grphome/grp_batch_effects/outputs/"
+data_folder: "/grphome/grp_batch_effects/data/"
+scripts_dir: ""
+adjust_script: "../adjust/adjust.R"
 
-adjuster: ["gmm", "min_mean", "mnn", "combat", "supervised_combat", "log_transformed"]
+adjuster: ["gmm", "min_mean", "mnn", "combat", "supervised_combat", "log_transformed", "xfactor"]
 dataset_ids:
   - "gse19615"
   - "gse20194"
