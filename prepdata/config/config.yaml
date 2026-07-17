@@ -13,7 +13,11 @@ osf_datasets:
   - GSE81538
   - GSE96058_HiSeq
   - GSE96058_NextSeq
-  - METABRIC
+  # METABRIC removed 2026-07-17: the shared OSF mirror (project eky3p) hosts cBioPortal's Z-SCORE release
+  # (data_mrna_illumina_microarray_zscores_ref_diploid_samples.txt), already per-gene standardized -- a
+  # platform-inconsistency artifact against every other (raw-scale) dataset in this corpus. METABRIC is now
+  # acquired directly from cBioPortal's raw expression file via single_dataset_downloaders/metabric.R/.sh
+  # (bypassing this generic OSF route entirely, like bladderbatch/gse24080/gse49711/tcga already do).
 
 gdrive_datasets:
   - GSE115577
