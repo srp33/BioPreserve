@@ -230,7 +230,18 @@ def process_dataset(raw_folder_path: Path, dataset_id: str, output_base_dir: Pat
         else:
             # Assume first column is sample ID
             expr_df = expr_df.set_index(expr_df.columns[0])
-        
+
+        # GSE62944_Tumor's OSF-hosted raw file is TCGA RSEM count-scale RNA-seq expression (the
+        # ExperimentHub GSE62944 package's default assay, built for a DESeq2-style count workflow),
+        # not log-scale like every other cohort this pipeline produces. Confirmed via the corpus this
+        # feeds: this cohort's per-gene mean ran 0-6400+ vs ~0-14 for every log2 cohort (microarray
+        # log2 intensity or log2(FPKM+1)/log2(count+1) RNA-seq). Apply log2(x+1) here, at conversion
+        # time, so a fresh OSF download always lands on the corpus's shared log2 scale -- rather than
+        # depending on a one-off correction to the external OSF mirror itself.
+        if dataset_id.upper() == 'GSE62944_TUMOR':
+            print_now("   \U0001f4d0 Applying log2(x + 1): source assay is RSEM count-scale, not log-scale.")
+            expr_df = np.log2(expr_df.astype(float) + 1.0)
+
         # 3. Prepare metadata
         # Find and set sample ID column as index - prioritize 'Sample_ID' specifically
         sample_id_col = None
