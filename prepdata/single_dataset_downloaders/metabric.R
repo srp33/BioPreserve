@@ -71,14 +71,41 @@ clin_raw <- read_tsv(tmp_clin, comment = "#", show_col_types = FALSE,
                                    "LATERALITY", "RADIO_THERAPY", "HISTOLOGICAL_SUBTYPE", "BREAST_SURGERY",
                                    "RFS_MONTHS", "RFS_STATUS"))
 
+# BINARIZE er_status/her2_status to clean numeric 0/1/NA at the SOURCE, matching the pre-existing gold file's
+# convention. Two independent downstream label parsers consume this column raw (Generative's
+# pheno_separation.binarize(), which needs an exact-string match against {"positive","negative",...}; and
+# BioPreserve/confounded_analysis's convert_raw_files.py status_to_binary()/map_column_with_regex(), which
+# ALSO expect clean strings or 0/1) -- neither recognizes cBioPortal's raw values, so passing them through
+# broke both label pipelines (discovered: metabric ER-label prevalence collapsed to 0% after this dataset
+# started using cBioPortal's RAW clinical file). Fixing here, once, is more robust than patching either
+# downstream parser for a single dataset's source quirks:
+#   er_status  (from ER_IHC): cBioPortal's raw value is literally "Positve" -- a genuine typo in their own
+#              source data (confirmed: not a transcription error here) -- so match it explicitly alongside
+#              the correctly-spelled "Positive". "Negative" -> 0; blank -> NA.
+#   her2_status (from HER2_SNP6): METABRIC has no cohort-wide IHC-based HER2 call in the public release; the
+#              SNP6 copy-number status (GAIN/NEUTRAL/LOSS/UNDEF) IS its standard HER2-status proxy in the
+#              literature. GAIN (amplified) -> 1, NEUTRAL/LOSS -> 0, UNDEF/blank -> NA. All downstream
+#              consumers expect a binary positive/negative-style call, so this is binarized here rather than
+#              passed through as a 4-level categorical (which none of them parse as a valid label column).
 pData <- clin_raw %>%
     dplyr::rename(Sample_ID = PATIENT_ID, er_status = ER_IHC, her2_status = HER2_SNP6) %>%
-    dplyr::mutate(Dataset_ID = "METABRIC", Platform_ID = "GPL6947") %>%
+    dplyr::mutate(Dataset_ID = "METABRIC", Platform_ID = "GPL6947",
+                 er_status = dplyr::case_when(
+                     tolower(trimws(er_status)) %in% c("positive", "positve") ~ 1,
+                     tolower(trimws(er_status)) == "negative" ~ 0,
+                     TRUE ~ NA_real_),
+                 her2_status = dplyr::case_when(
+                     tolower(trimws(her2_status)) == "gain" ~ 1,
+                     tolower(trimws(her2_status)) %in% c("neutral", "loss") ~ 0,
+                     TRUE ~ NA_real_)) %>%
     dplyr::select(-INTCLUST) %>%
     dplyr::select(Sample_ID, Dataset_ID, Platform_ID, LYMPH_NODES_EXAMINED_POSITIVE, NPI, CELLULARITY,
                   CHEMOTHERAPY, COHORT, er_status, her2_status, HORMONE_THERAPY, INFERRED_MENOPAUSAL_STATE,
                   SEX, AGE_AT_DIAGNOSIS, OS_MONTHS, OS_STATUS, CLAUDIN_SUBTYPE, THREEGENE, VITAL_STATUS,
                   LATERALITY, RADIO_THERAPY, HISTOLOGICAL_SUBTYPE, BREAST_SURGERY, RFS_STATUS, RFS_MONTHS)
+
+cat("er_status counts (post-binarize):\n"); print(table(pData$er_status, useNA = "always"))
+cat("her2_status counts (post-binarize):\n"); print(table(pData$her2_status, useNA = "always"))
 
 # `/data/gold` matches the OTHER single_dataset_downloaders/ scripts' convention (a Docker/Apptainer mount
 # in the confounded_analysis container). On a bare-metal run (e.g. BioPreserve via sbatch, no /data mount),
