@@ -53,6 +53,16 @@ print("Download complete.")
 expr_matrix <- assay(se_tumor)
 print(paste("Expression matrix dimensions (genes x samples):", paste(dim(expr_matrix), collapse = " x ")))
 
+# GSE62944's default assay is TCGA RSEM count-scale RNA-seq expression (built for a
+# DESeq2 workflow, per the package vignette), not log-scale. Every other cohort in this
+# corpus is log2 expression (microarray log2 intensity or log2(FPKM+1)/log2(count+1)
+# RNA-seq) — confirmed empirically: this cohort's per-gene mean runs 0-6400+ vs ~0-14 for
+# every other cohort. Apply the same log2(x+1) convention used for TCGA data elsewhere
+# in this pipeline (see tcga_expression.py) so this cohort lands on the corpus's shared
+# log2 scale instead of silently being ~1000x the dynamic range of its peers.
+expr_matrix <- log2(expr_matrix + 1)
+print("Applied log2(x + 1) to bring RSEM count-scale expression onto the corpus's log2 scale.")
+
 # Extract the sample metadata (phenotype data)
 # The 'colData()' function retrieves the metadata for the columns (samples).
 meta_df <- as.data.frame(colData(se_tumor))
